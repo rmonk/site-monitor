@@ -9,6 +9,7 @@ on:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
+  ACTIONS_RUNNER_FORCE_NODE24: "true"
 
 jobs:
   build-and-push:
