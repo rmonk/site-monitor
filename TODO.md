@@ -35,3 +35,13 @@
 
 - [x] **6. GitHub Actions Workflow**
   - [x] Add `.github/workflows/docker-publish.yml` to build and publish container image to GHCR on pushes to `main`
+
+- [x] **7. Host Detail Enhancements (Uptime Graph & Screenshots)**
+  - [x] Add Chart.js / uptime status timeline graph over time in host detail view (`/monitors/{id}`)
+  - [x] Integrate Playwright / Headless browser to capture screenshots on checks
+  - [x] Store & display screenshot of last successful request
+  - [x] Store & display screenshot of failed request if site is currently down
+  - [x] Serve screenshots via static/media endpoint or route (`/screenshots/...`)
+  - [x] Update `Dockerfile` & `requirements.txt` to include necessary headless browser / playwright dependencies
+  - [x] Update automated tests & run full test suite
+  - [x] Merge to `main` and push to remote

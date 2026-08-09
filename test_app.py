@@ -122,6 +122,11 @@ def test_monitor_crud_operations():
         cursor.execute("SELECT COUNT(*) as count FROM monitors WHERE id = ?", (monitor_id,))
         assert cursor.fetchone()["count"] == 0
 
+def test_screenshot_route():
+    # Test non-existent file
+    res_404 = client.get("/screenshots/nonexistent.png")
+    assert res_404.status_code == 404
+
 def test_require_login_mode():
     login_res = client.post("/login", data={"username": "testadmin", "password": "testsecret123"}, follow_redirects=False)
     session_token = login_res.cookies["session_token"]

@@ -60,10 +60,20 @@ def init_db():
                 repeat_alerts INTEGER DEFAULT NULL,
                 repeat_interval_minutes INTEGER DEFAULT NULL,
                 is_active INTEGER NOT NULL DEFAULT 1,
+                last_success_screenshot_time TEXT,
+                last_failed_screenshot_time TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         """)
+
+        # Add columns if migrating from older schema version
+        cursor.execute("PRAGMA table_info(monitors);")
+        columns = [row["name"] for row in cursor.fetchall()]
+        if "last_success_screenshot_time" not in columns:
+            cursor.execute("ALTER TABLE monitors ADD COLUMN last_success_screenshot_time TEXT;")
+        if "last_failed_screenshot_time" not in columns:
+            cursor.execute("ALTER TABLE monitors ADD COLUMN last_failed_screenshot_time TEXT;")
 
         # Check history table
         cursor.execute("""

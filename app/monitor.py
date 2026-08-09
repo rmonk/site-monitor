@@ -6,6 +6,7 @@ import httpx
 from typing import Optional, Dict, Any
 from app.database import get_db, get_setting
 from app.alerts import send_pushover_notification
+from app.screenshots import capture_screenshot
 
 logger = logging.getLogger("site_monitor.checker")
 
@@ -70,9 +71,29 @@ async def check_monitor(monitor: Dict[str, Any]) -> Dict[str, Any]:
 
     now_ts = int(time.time())
 
+    # Capture screenshot asynchronously
+    screenshot_ts = await capture_screenshot(
+        monitor_id=monitor_id,
+        url=url,
+        is_success=is_up,
+        error_message=error_message or ""
+    )
+
     # Process check result in DB
     with get_db() as conn:
         cursor = conn.cursor()
+
+        # Update screenshot timestamp in monitors table
+        if is_up:
+            cursor.execute(
+                "UPDATE monitors SET last_success_screenshot_time = ? WHERE id = ?",
+                (screenshot_ts, monitor_id)
+            )
+        else:
+            cursor.execute(
+                "UPDATE monitors SET last_failed_screenshot_time = ? WHERE id = ?",
+                (screenshot_ts, monitor_id)
+            )
 
         # 1. Record check history
         cursor.execute("""

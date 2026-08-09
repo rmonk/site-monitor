@@ -19,6 +19,8 @@ from app.auth import (
 )
 from app.alerts import send_test_alert
 from app.monitor import check_monitor, monitoring_worker_loop
+from app.screenshots import get_screenshots_dir
+from fastapi.responses import FileResponse
 
 
 @asynccontextmanager
@@ -127,6 +129,18 @@ async def dashboard(request: Request):
     })
     return templates.TemplateResponse(request, "dashboard.html", ctx)
 
+
+@app.get("/screenshots/{filename}")
+async def serve_screenshot(filename: str):
+    """Serves captured monitor screenshot PNG images."""
+    if ".." in filename or "/" in filename or "\\" in filename:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+    
+    filepath = get_screenshots_dir() / filename
+    if not filepath.exists():
+        raise HTTPException(status_code=404, detail="Screenshot not found")
+    
+    return FileResponse(filepath, media_type="image/png")
 
 @app.get("/login", response_class=HTMLResponse)
 async def login_page(request: Request):
