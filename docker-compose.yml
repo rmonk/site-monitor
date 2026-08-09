@@ -1,0 +1,29 @@
+name: site-monitor
+
+services:
+  site-monitor:
+    image: ghcr.io/rmonk/site-monitor:latest
+    # Or build locally:
+    # build:
+    #   context: .
+    #   dockerfile: Dockerfile
+    container_name: site-monitor
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - PORT=8000
+      - HOST=0.0.0.0
+      - DATA_DIR=/data
+      - INITIAL_ADMIN_USER=admin
+      - INITIAL_ADMIN_PASSWORD=change_me_secret_password
+      - SECRET_KEY=replace_with_a_long_random_secret_key
+    volumes:
+      # Persistent SQLite database storage
+      - site_monitor_data:/data
+      # Alternatively, mount a local host directory:
+      # - ./data:/data
+
+volumes:
+  site_monitor_data:
+    driver: local

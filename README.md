@@ -50,9 +50,38 @@ A lightweight, containerized website monitoring application with a web UI and Pu
 
 ---
 
-## Quickstart with Docker / Podman
+## Quickstart
 
-### Run Container
+### Option 1: Docker Compose (Recommended)
+
+Start the service using `docker-compose.yml`:
+
+```yaml
+version: "3.8"
+services:
+  site-monitor:
+    image: ghcr.io/rmonk/site-monitor:latest
+    container_name: site-monitor
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - INITIAL_ADMIN_USER=admin
+      - INITIAL_ADMIN_PASSWORD=change_me_secret_password
+      - SECRET_KEY=replace_with_a_long_random_secret_key
+    volumes:
+      - site_monitor_data:/data
+
+volumes:
+  site_monitor_data:
+```
+
+Run:
+```bash
+docker compose up -d
+```
+
+### Option 2: Docker / Podman CLI
 
 ```bash
 docker run -d \
@@ -61,7 +90,7 @@ docker run -d \
   -v site_monitor_data:/data \
   -e INITIAL_ADMIN_USER=admin \
   -e INITIAL_ADMIN_PASSWORD=MySecurePassword123! \
-  ghcr.io/username/site-monitor:latest
+  ghcr.io/rmonk/site-monitor:latest
 ```
 
 Access the Web UI at `http://localhost:8000`.
