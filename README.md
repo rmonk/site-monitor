@@ -5,6 +5,7 @@ A lightweight, containerized website monitoring application with a web UI and Pu
 ![Python](https://img.shields.io/badge/Python-3.12%2B-blue)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.110%2B-009688)
 ![Docker](https://img.shields.io/badge/Docker-Ready-2496ED)
+![License](https://img.shields.io/badge/License-MIT-green.svg)
 
 ---
 
@@ -122,3 +123,10 @@ Access the Web UI at `http://localhost:8000`.
 
 - Development is conducted on the `devel` branch.
 - Pushes to `main` trigger the GitHub Actions workflow (`.github/workflows/docker-publish.yml`), which builds and publishes the container image to GitHub Container Registry (`ghcr.io`).
+
+---
+
+## License
+
+Distributed under the [MIT License](LICENSE).
+
