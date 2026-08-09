@@ -27,6 +27,12 @@ A lightweight, containerized website monitoring application with a web UI and Pu
   - **Repeat Alerts**: Configurable re-alert behavior with default global settings and per-host overrides (enable/disable, custom interval in minutes).
   - **Recovery Notifications**: Automatic notification when a host recovers and returns to UP status.
 
+- **Theming & Appearance Capabilities**:
+  - **Modes**: Light mode (default), Dark mode, and System mode (automatically syncs with OS preference).
+  - **Complementary Color Schemes**: Default Blue, Emerald / Teal, Purple / Violet, Amber / Warm, Crimson / Rose, and Slate / Dark.
+  - **Fully Custom Color Palette**: Configure custom primary accent color, background tone, card surface tone, and text color.
+  - **Quick Theme Switcher**: Instant mode toggle accessible directly from the top navigation bar.
+
 - **Access Control Modes**:
   - **Read-Only Public Access**: Unauthenticated visitors can view the status dashboard, while administrative actions (add/edit/delete/settings) require login.
   - **Always Require Login**: Secures all routes behind admin authentication.

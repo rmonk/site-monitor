@@ -24,6 +24,8 @@ def setup_module(module):
 def test_initial_setup():
     assert get_setting("auth_mode") == "readonly_public"
     assert get_setting("default_capture_screenshots") == "true"
+    assert get_setting("theme_mode") == "light"
+    assert get_setting("theme_color_preset") == "default"
     with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute("SELECT * FROM users WHERE username = 'testadmin'")
@@ -169,6 +171,51 @@ def test_screenshot_settings():
 
     # Delete test monitor
     client.post(f"/monitors/{m_id}/delete", cookies={"session_token": session_token})
+
+def test_theme_settings():
+    login_res = client.post("/login", data={"username": "testadmin", "password": "testsecret123"}, follow_redirects=False)
+    session_token = login_res.cookies["session_token"]
+
+    # 1. Update theme mode to dark with emerald preset
+    res = client.post("/settings/theme", data={
+        "theme_mode": "dark",
+        "theme_color_preset": "emerald",
+        "theme_custom_primary": "#0d6efd",
+        "theme_custom_bg": "#f8f9fa",
+        "theme_custom_card": "#ffffff",
+        "theme_custom_text": "#212529"
+    }, cookies={"session_token": session_token}, follow_redirects=False)
+    assert res.status_code == 303
+    assert get_setting("theme_mode") == "dark"
+    assert get_setting("theme_color_preset") == "emerald"
+
+    # 2. Update theme to custom colors
+    res_custom = client.post("/settings/theme", data={
+        "theme_mode": "system",
+        "theme_color_preset": "custom",
+        "theme_custom_primary": "#123456",
+        "theme_custom_bg": "#abcdef",
+        "theme_custom_card": "#ffffff",
+        "theme_custom_text": "#111111"
+    }, cookies={"session_token": session_token}, follow_redirects=False)
+    assert res_custom.status_code == 303
+    assert get_setting("theme_mode") == "system"
+    assert get_setting("theme_color_preset") == "custom"
+    assert get_setting("theme_custom_primary") == "#123456"
+    assert get_setting("theme_custom_bg") == "#abcdef"
+
+    # 3. Check dashboard renders HTML with data attributes
+    dash_res = client.get("/")
+    assert dash_res.status_code == 200
+    assert 'data-theme-mode="system"' in dash_res.text
+    assert 'data-theme-preset="custom"' in dash_res.text
+    assert '#123456' in dash_res.text
+
+    # Reset theme back to light default
+    client.post("/settings/theme", data={
+        "theme_mode": "light",
+        "theme_color_preset": "default"
+    }, cookies={"session_token": session_token})
 
 def test_require_login_mode():
     login_res = client.post("/login", data={"username": "testadmin", "password": "testsecret123"}, follow_redirects=False)

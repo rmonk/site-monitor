@@ -7,6 +7,146 @@
     <div class="col-lg-10">
         <h2 class="fw-bold mb-4"><i class="bi bi-gear-fill text-primary me-2"></i>Global Settings</h2>
 
+        <!-- Theme & Appearance Settings -->
+        <div class="card border-0 shadow-sm mb-4">
+            <div class="card-header bg-body py-3">
+                <h5 class="mb-0 fw-bold"><i class="bi bi-palette-fill me-2 text-primary"></i>Theme & Appearance</h5>
+            </div>
+            <div class="card-body p-4">
+                <form action="/settings/theme" method="post">
+                    
+                    <!-- Theme Mode -->
+                    <div class="mb-4">
+                        <label class="form-label fw-bold">Display Mode</label>
+                        <div class="d-flex flex-wrap gap-3">
+                            <div class="form-check">
+                                <input class="form-check-input" type="radio" name="theme_mode" id="mode_light" value="light" {% if settings.theme_mode == 'light' or not settings.theme_mode %}checked{% endif %}>
+                                <label class="form-check-label" for="mode_light">
+                                    <i class="bi bi-sun-fill text-warning me-1"></i> Light Mode (Default)
+                                </label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input" type="radio" name="theme_mode" id="mode_dark" value="dark" {% if settings.theme_mode == 'dark' %}checked{% endif %}>
+                                <label class="form-check-label" for="mode_dark">
+                                    <i class="bi bi-moon-stars-fill text-warning me-1"></i> Dark Mode
+                                </label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input" type="radio" name="theme_mode" id="mode_system" value="system" {% if settings.theme_mode == 'system' %}checked{% endif %}>
+                                <label class="form-check-label" for="mode_system">
+                                    <i class="bi bi-display text-info me-1"></i> System Preference
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Color Scheme Preset -->
+                    <div class="mb-4">
+                        <label class="form-label fw-bold">Complementary Color Scheme</label>
+                        <div class="row g-2">
+                            <div class="col-6 col-md-4">
+                                <div class="form-check">
+                                    <input class="form-check-input" type="radio" name="theme_color_preset" id="preset_default" value="default" {% if settings.theme_color_preset == 'default' or not settings.theme_color_preset %}checked{% endif %}>
+                                    <label class="form-check-label d-flex align-items-center gap-2" for="preset_default">
+                                        <span class="swatch-circle" style="background-color: #0d6efd;"></span> Default Blue
+                                    </label>
+                                </div>
+                            </div>
+                            <div class="col-6 col-md-4">
+                                <div class="form-check">
+                                    <input class="form-check-input" type="radio" name="theme_color_preset" id="preset_emerald" value="emerald" {% if settings.theme_color_preset == 'emerald' %}checked{% endif %}>
+                                    <label class="form-check-label d-flex align-items-center gap-2" for="preset_emerald">
+                                        <span class="swatch-circle" style="background-color: #0d9488;"></span> Emerald / Teal
+                                    </label>
+                                </div>
+                            </div>
+                            <div class="col-6 col-md-4">
+                                <div class="form-check">
+                                    <input class="form-check-input" type="radio" name="theme_color_preset" id="preset_purple" value="purple" {% if settings.theme_color_preset == 'purple' %}checked{% endif %}>
+                                    <label class="form-check-label d-flex align-items-center gap-2" for="preset_purple">
+                                        <span class="swatch-circle" style="background-color: #7c3aed;"></span> Purple / Violet
+                                    </label>
+                                </div>
+                            </div>
+                            <div class="col-6 col-md-4">
+                                <div class="form-check">
+                                    <input class="form-check-input" type="radio" name="theme_color_preset" id="preset_amber" value="amber" {% if settings.theme_color_preset == 'amber' %}checked{% endif %}>
+                                    <label class="form-check-label d-flex align-items-center gap-2" for="preset_amber">
+                                        <span class="swatch-circle" style="background-color: #d97706;"></span> Amber / Warm
+                                    </label>
+                                </div>
+                            </div>
+                            <div class="col-6 col-md-4">
+                                <div class="form-check">
+                                    <input class="form-check-input" type="radio" name="theme_color_preset" id="preset_crimson" value="crimson" {% if settings.theme_color_preset == 'crimson' %}checked{% endif %}>
+                                    <label class="form-check-label d-flex align-items-center gap-2" for="preset_crimson">
+                                        <span class="swatch-circle" style="background-color: #e11d48;"></span> Crimson / Rose
+                                    </label>
+                                </div>
+                            </div>
+                            <div class="col-6 col-md-4">
+                                <div class="form-check">
+                                    <input class="form-check-input" type="radio" name="theme_color_preset" id="preset_slate" value="slate" {% if settings.theme_color_preset == 'slate' %}checked{% endif %}>
+                                    <label class="form-check-label d-flex align-items-center gap-2" for="preset_slate">
+                                        <span class="swatch-circle" style="background-color: #475569;"></span> Slate / Dark
+                                    </label>
+                                </div>
+                            </div>
+                            <div class="col-6 col-md-4">
+                                <div class="form-check">
+                                    <input class="form-check-input" type="radio" name="theme_color_preset" id="preset_custom" value="custom" {% if settings.theme_color_preset == 'custom' %}checked{% endif %}>
+                                    <label class="form-check-label d-flex align-items-center gap-2" for="preset_custom">
+                                        <span class="swatch-circle" style="background: linear-gradient(135deg, #0d6efd, #e11d48);"></span> Fully Custom Color Set
+                                    </label>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Fully Custom Color Palette Inputs -->
+                    <div id="custom_color_options" class="p-3 border rounded mb-4 bg-body-tertiary" style="{% if settings.theme_color_preset != 'custom' %}display: none;{% endif %}">
+                        <h6 class="fw-bold mb-3 text-primary"><i class="bi bi-sliders me-1"></i> Custom Palette Settings</h6>
+                        
+                        <div class="row g-3">
+                            <div class="col-md-6">
+                                <label for="theme_custom_primary" class="form-label fw-bold small">Primary Accent Color</label>
+                                <div class="input-group">
+                                    <input type="color" class="form-control form-control-color" id="theme_custom_primary_picker" value="{{ settings.theme_custom_primary or '#0d6efd' }}" title="Choose primary color">
+                                    <input type="text" class="form-control font-monospace" id="theme_custom_primary" name="theme_custom_primary" value="{{ settings.theme_custom_primary or '#0d6efd' }}">
+                                </div>
+                            </div>
+
+                            <div class="col-md-6">
+                                <label for="theme_custom_bg" class="form-label fw-bold small">Background Tone</label>
+                                <div class="input-group">
+                                    <input type="color" class="form-control form-control-color" id="theme_custom_bg_picker" value="{{ settings.theme_custom_bg or '#f8f9fa' }}" title="Choose background color">
+                                    <input type="text" class="form-control font-monospace" id="theme_custom_bg" name="theme_custom_bg" value="{{ settings.theme_custom_bg or '#f8f9fa' }}">
+                                </div>
+                            </div>
+
+                            <div class="col-md-6">
+                                <label for="theme_custom_card" class="form-label fw-bold small">Card / Surface Tone</label>
+                                <div class="input-group">
+                                    <input type="color" class="form-control form-control-color" id="theme_custom_card_picker" value="{{ settings.theme_custom_card or '#ffffff' }}" title="Choose card surface color">
+                                    <input type="text" class="form-control font-monospace" id="theme_custom_card" name="theme_custom_card" value="{{ settings.theme_custom_card or '#ffffff' }}">
+                                </div>
+                            </div>
+
+                            <div class="col-md-6">
+                                <label for="theme_custom_text" class="form-label fw-bold small">Text Color</label>
+                                <div class="input-group">
+                                    <input type="color" class="form-control form-control-color" id="theme_custom_text_picker" value="{{ settings.theme_custom_text or '#212529' }}" title="Choose text color">
+                                    <input type="text" class="form-control font-monospace" id="theme_custom_text" name="theme_custom_text" value="{{ settings.theme_custom_text or '#212529' }}">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <button type="submit" class="btn btn-primary btn-sm px-3">Save Theme Settings</button>
+                </form>
+            </div>
+        </div>
+
         <!-- Auth Mode Settings -->
         <div class="card border-0 shadow-sm mb-4">
             <div class="card-header bg-body py-3">
@@ -66,7 +206,6 @@
                     <button type="submit" class="btn btn-primary btn-sm px-3">Save Defaults</button>
                 </form>
             </div>
-        </div>
         </div>
 
         <!-- Pushover Configuration -->

@@ -113,7 +113,13 @@ def init_db():
             "pushover_user_key": "",
             "default_repeat_alerts": "true",
             "default_repeat_interval_minutes": "60",
-            "default_capture_screenshots": "true"
+            "default_capture_screenshots": "true",
+            "theme_mode": "light",
+            "theme_color_preset": "default",
+            "theme_custom_primary": "#0d6efd",
+            "theme_custom_bg": "#f8f9fa",
+            "theme_custom_card": "#ffffff",
+            "theme_custom_text": "#212529"
         }
 
         for key, val in default_settings.items():

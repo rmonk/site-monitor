@@ -43,10 +43,31 @@ templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
+def hex_to_rgb(hex_str: str) -> str:
+    hex_str = hex_str.lstrip('#')
+    if len(hex_str) == 6:
+        try:
+            r = int(hex_str[0:2], 16)
+            g = int(hex_str[2:4], 16)
+            b = int(hex_str[4:6], 16)
+            return f"{r}, {g}, {b}"
+        except ValueError:
+            pass
+    return "13, 110, 253"
+
+
 def get_template_context(request: Request, active_page: str = "", msg: str = "", msg_type: str = "info") -> dict:
     user = get_current_user(request)
     auth_mode = get_setting("auth_mode", "readonly_public")
     
+    # Theme settings
+    theme_mode = get_setting("theme_mode", "light")
+    theme_color_preset = get_setting("theme_color_preset", "default")
+    theme_custom_primary = get_setting("theme_custom_primary", "#0d6efd")
+    theme_custom_bg = get_setting("theme_custom_bg", "#f8f9fa")
+    theme_custom_card = get_setting("theme_custom_card", "#ffffff")
+    theme_custom_text = get_setting("theme_custom_text", "#212529")
+
     # Query param messages
     if not msg and "msg" in request.query_params:
         msg = request.query_params.get("msg")
@@ -58,7 +79,14 @@ def get_template_context(request: Request, active_page: str = "", msg: str = "",
         "active_page": active_page,
         "msg": msg,
         "msg_type": msg_type,
-        "current_year": datetime.now().year
+        "current_year": datetime.now().year,
+        "theme_mode": theme_mode,
+        "theme_color_preset": theme_color_preset,
+        "theme_custom_primary": theme_custom_primary,
+        "theme_custom_primary_rgb": hex_to_rgb(theme_custom_primary),
+        "theme_custom_bg": theme_custom_bg,
+        "theme_custom_card": theme_custom_card,
+        "theme_custom_text": theme_custom_text
     }
 
 # --- Routes ---
@@ -358,6 +386,40 @@ async def settings_auth_post(request: Request):
     if auth_mode in ("readonly_public", "require_login"):
         set_setting("auth_mode", auth_mode)
     return RedirectResponse(url="/settings?msg=Authentication+access+mode+updated&type=success", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@app.post("/settings/theme")
+async def settings_theme_post(request: Request):
+    check_access(request, require_write=True)
+    form_data = await request.form()
+    theme_mode = str(form_data.get("theme_mode", "light")).strip()
+    theme_color_preset = str(form_data.get("theme_color_preset", "default")).strip()
+    theme_custom_primary = str(form_data.get("theme_custom_primary", "#0d6efd")).strip()
+    theme_custom_bg = str(form_data.get("theme_custom_bg", "#f8f9fa")).strip()
+    theme_custom_card = str(form_data.get("theme_custom_card", "#ffffff")).strip()
+    theme_custom_text = str(form_data.get("theme_custom_text", "#212529")).strip()
+
+    if theme_mode in ("light", "dark", "system"):
+        set_setting("theme_mode", theme_mode)
+    if theme_color_preset in ("default", "emerald", "purple", "amber", "crimson", "slate", "custom"):
+        set_setting("theme_color_preset", theme_color_preset)
+
+    if theme_custom_primary.startswith("#") and len(theme_custom_primary) in (4, 7):
+        set_setting("theme_custom_primary", theme_custom_primary)
+    if theme_custom_bg.startswith("#") and len(theme_custom_bg) in (4, 7):
+        set_setting("theme_custom_bg", theme_custom_bg)
+    if theme_custom_card.startswith("#") and len(theme_custom_card) in (4, 7):
+        set_setting("theme_custom_card", theme_custom_card)
+    if theme_custom_text.startswith("#") and len(theme_custom_text) in (4, 7):
+        set_setting("theme_custom_text", theme_custom_text)
+
+    # If request came from quick toggle, redirect to referer if present
+    referer = request.headers.get("referer")
+    target_url = "/settings?msg=Theme+settings+updated&type=success"
+    if "quick_toggle" in form_data and referer:
+        target_url = f"{referer}?msg=Theme+updated&type=success"
+
+    return RedirectResponse(url=target_url, status_code=status.HTTP_303_SEE_OTHER)
 
 
 @app.post("/settings/alerts-default")
