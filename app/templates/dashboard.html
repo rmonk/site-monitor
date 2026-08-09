@@ -1,0 +1,179 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard - Site Monitor{% endblock %}
+
+{% block content %}
+<div class="row g-3 mb-4">
+    <div class="col-md-3">
+        <div class="card border-0 shadow-sm text-bg-primary h-100">
+            <div class="card-body d-flex align-items-center justify-content-between">
+                <div>
+                    <h6 class="text-white-50 mb-1">Total Monitors</h6>
+                    <h2 class="display-6 fw-bold mb-0">{{ total_count }}</h2>
+                </div>
+                <i class="bi bi-display fs-1 opacity-50"></i>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card border-0 shadow-sm text-bg-success h-100">
+            <div class="card-body d-flex align-items-center justify-content-between">
+                <div>
+                    <h6 class="text-white-50 mb-1">Operational (UP)</h6>
+                    <h2 class="display-6 fw-bold mb-0">{{ up_count }}</h2>
+                </div>
+                <i class="bi bi-check-circle-fill fs-1 opacity-50"></i>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card border-0 shadow-sm {% if down_count > 0 %}text-bg-danger{% else %}text-bg-secondary{% endif %} h-100">
+            <div class="card-body d-flex align-items-center justify-content-between">
+                <div>
+                    <h6 class="text-white-50 mb-1">Down</h6>
+                    <h2 class="display-6 fw-bold mb-0">{{ down_count }}</h2>
+                </div>
+                <i class="bi bi-exclamation-triangle-fill fs-1 opacity-50"></i>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card border-0 shadow-sm text-bg-dark h-100">
+            <div class="card-body d-flex align-items-center justify-content-between">
+                <div>
+                    <h6 class="text-white-50 mb-1">Overall Uptime</h6>
+                    <h2 class="display-6 fw-bold mb-0">{{ uptime_pct }}%</h2>
+                </div>
+                <i class="bi bi-pie-chart-fill fs-1 opacity-50"></i>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="card border-0 shadow-sm mb-4">
+    <div class="card-header bg-body d-flex align-items-center justify-content-between py-3">
+        <h5 class="mb-0 fw-bold"><i class="bi bi-list-task me-2 text-primary"></i>Monitored Websites</h5>
+        <div class="d-flex align-items-center gap-2">
+            <button class="btn btn-sm btn-outline-secondary" onclick="location.reload();">
+                <i class="bi bi-arrow-clockwise me-1"></i> Refresh
+            </button>
+            {% if user %}
+            <a href="/monitors/new" class="btn btn-sm btn-primary">
+                <i class="bi bi-plus-lg me-1"></i> Add Monitor
+            </a>
+            {% endif %}
+        </div>
+    </div>
+    <div class="card-body p-0">
+        {% if monitors %}
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th style="width: 20%;">Name / URL</th>
+                        <th style="width: 12%;">Status</th>
+                        <th style="width: 12%;">Response Time</th>
+                        <th style="width: 15%;">Last Check</th>
+                        <th style="width: 15%;">Interval & Threshold</th>
+                        <th style="width: 13%;">Repeat Alert</th>
+                        <th style="width: 13%;" class="text-end">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for m in monitors %}
+                    <tr>
+                        <td>
+                            <a href="/monitors/{{ m.id }}" class="fw-bold text-decoration-none text-body">{{ m.name }}</a>
+                            <br>
+                            <a href="{{ m.url }}" target="_blank" rel="noopener" class="text-body-secondary small text-decoration-none">
+                                {{ m.url }} <i class="bi bi-box-arrow-up-right ms-1"></i>
+                            </a>
+                        </td>
+                        <td>
+                            {% if m.is_active == 0 %}
+                                <span class="badge text-bg-secondary"><i class="bi bi-pause-circle me-1"></i> PAUSED</span>
+                            {% elif m.last_is_up is none %}
+                                <span class="badge text-bg-warning"><i class="bi bi-question-circle me-1"></i> PENDING</span>
+                            {% elif m.last_is_up == 1 %}
+                                <span class="badge text-bg-success"><i class="bi bi-check-circle me-1"></i> UP</span>
+                            {% else %}
+                                <span class="badge text-bg-danger"><i class="bi bi-x-circle me-1"></i> DOWN</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if m.last_response_time_ms is not none %}
+                                <span class="fw-semibold">{{ m.last_response_time_ms }} ms</span>
+                            {% else %}
+                                <span class="text-body-secondary">-</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if m.last_check_time %}
+                                <span class="small">{{ m.last_check_time }}</span>
+                            {% else %}
+                                <span class="text-body-secondary small">Never</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            <span class="badge text-bg-light border">
+                                Every {{ m.check_interval }}s
+                            </span>
+                            <span class="badge text-bg-light border" title="Failures before alert">
+                                Threshold: {{ m.failure_threshold }}
+                            </span>
+                            {% if m.regex_pattern %}
+                                <span class="badge text-bg-info text-dark ms-1" title="Regex match enabled">Regex</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            <span class="small">
+                            {% if m.repeat_alerts == 1 %}
+                                <i class="bi bi-bell-fill text-primary me-1"></i> Yes ({{ m.repeat_interval_minutes }}m)
+                            {% elif m.repeat_alerts == 0 %}
+                                <i class="bi bi-bell-slash text-muted me-1"></i> Disabled
+                            {% else %}
+                                <i class="bi bi-bell me-1 text-secondary"></i> Default ({% if default_repeat_alerts %}Enabled, {{ default_repeat_interval }}m{% else %}Disabled{% endif %})
+                            {% endif %}
+                            </span>
+                        </td>
+                        <td class="text-end">
+                            <div class="btn-group btn-group-sm">
+                                <a href="/monitors/{{ m.id }}" class="btn btn-outline-secondary" title="View History">
+                                    <i class="bi bi-clock-history"></i>
+                                </a>
+                                {% if user %}
+                                <form action="/monitors/{{ m.id }}/check" method="post" class="d-inline">
+                                    <button type="submit" class="btn btn-outline-primary" title="Check Now">
+                                        <i class="bi bi-arrow-repeat"></i>
+                                    </button>
+                                </form>
+                                <a href="/monitors/{{ m.id }}/edit" class="btn btn-outline-secondary" title="Edit">
+                                    <i class="bi bi-pencil"></i>
+                                </a>
+                                <form action="/monitors/{{ m.id }}/delete" method="post" class="d-inline" onsubmit="return confirm('Are you sure you want to delete {{ m.name }}?');">
+                                    <button type="submit" class="btn btn-outline-danger" title="Delete">
+                                        <i class="bi bi-trash"></i>
+                                    </button>
+                                </form>
+                                {% endif %}
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="text-center py-5">
+            <i class="bi bi-inbox fs-1 text-body-tertiary"></i>
+            <p class="mt-2 text-body-secondary">No website monitors configured yet.</p>
+            {% if user %}
+            <a href="/monitors/new" class="btn btn-primary btn-sm mt-1">
+                <i class="bi bi-plus-lg me-1"></i> Add Your First Monitor
+            </a>
+            {% endif %}
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

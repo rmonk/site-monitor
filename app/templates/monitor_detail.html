@@ -1,0 +1,165 @@
+{% extends "base.html" %}
+
+{% block title %}{{ monitor.name }} - Site Monitor{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-center justify-content-between mb-4">
+    <div>
+        <nav aria-label="breadcrumb">
+            <ol class="breadcrumb mb-1">
+                <li class="breadcrumb-item"><a href="/">Dashboard</a></li>
+                <li class="breadcrumb-item active">{{ monitor.name }}</li>
+            </ol>
+        </nav>
+        <h2 class="fw-bold mb-0 d-flex align-items-center gap-2">
+            {{ monitor.name }}
+            {% if alert_state and alert_state.is_currently_down == 1 %}
+                <span class="badge text-bg-danger fs-6"><i class="bi bi-x-circle me-1"></i> DOWN</span>
+            {% else %}
+                <span class="badge text-bg-success fs-6"><i class="bi bi-check-circle me-1"></i> UP</span>
+            {% endif %}
+            {% if monitor.is_active == 0 %}
+                <span class="badge text-bg-secondary fs-6"><i class="bi bi-pause-circle me-1"></i> PAUSED</span>
+            {% endif %}
+        </h2>
+        <a href="{{ monitor.url }}" target="_blank" class="text-body-secondary text-decoration-none small">
+            {{ monitor.url }} <i class="bi bi-box-arrow-up-right"></i>
+        </a>
+    </div>
+
+    <div class="d-flex gap-2">
+        {% if user %}
+        <form action="/monitors/{{ monitor.id }}/check" method="post">
+            <button type="submit" class="btn btn-outline-primary">
+                <i class="bi bi-arrow-repeat me-1"></i> Check Now
+            </button>
+        </form>
+        <a href="/monitors/{{ monitor.id }}/edit" class="btn btn-outline-secondary">
+            <i class="bi bi-pencil me-1"></i> Edit
+        </a>
+        <form action="/monitors/{{ monitor.id }}/delete" method="post" onsubmit="return confirm('Delete this monitor?');">
+            <button type="submit" class="btn btn-outline-danger">
+                <i class="bi bi-trash me-1"></i> Delete
+            </button>
+        </form>
+        {% endif %}
+    </div>
+</div>
+
+<div class="row g-3 mb-4">
+    <div class="col-md-3">
+        <div class="card border-0 shadow-sm h-100">
+            <div class="card-body">
+                <span class="text-body-secondary small fw-bold">CHECK INTERVAL</span>
+                <h4 class="mt-2 mb-0">{{ monitor.check_interval }} seconds</h4>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card border-0 shadow-sm h-100">
+            <div class="card-body">
+                <span class="text-body-secondary small fw-bold">FAILURE THRESHOLD</span>
+                <h4 class="mt-2 mb-0">{{ monitor.failure_threshold }} failure(s)</h4>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card border-0 shadow-sm h-100">
+            <div class="card-body">
+                <span class="text-body-secondary small fw-bold">REPEAT ALERT CONFIG</span>
+                <h4 class="mt-2 mb-0">
+                    {% if monitor.repeat_alerts == 1 %}
+                        Enabled ({{ monitor.repeat_interval_minutes }}m)
+                    {% elif monitor.repeat_alerts == 0 %}
+                        Disabled
+                    {% else %}
+                        Default ({% if default_repeat_alerts %}Enabled, {{ default_repeat_interval }}m{% else %}Disabled{% endif %})
+                    {% endif %}
+                </h4>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card border-0 shadow-sm h-100">
+            <div class="card-body">
+                <span class="text-body-secondary small fw-bold">REGEX CHECK</span>
+                <h4 class="mt-2 mb-0">
+                    {% if monitor.regex_pattern %}
+                        <code>{{ monitor.regex_pattern }}</code>
+                    {% else %}
+                        <span class="text-body-tertiary">None</span>
+                    {% endif %}
+                </h4>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="card border-0 shadow-sm">
+    <div class="card-header bg-body py-3">
+        <h5 class="mb-0 fw-bold"><i class="bi bi-clock-history me-2 text-primary"></i>Recent Check History (Last 50)</h5>
+    </div>
+    <div class="card-body p-0">
+        {% if history %}
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>Timestamp</th>
+                        <th>Status</th>
+                        <th>HTTP Code</th>
+                        <th>Response Time</th>
+                        <th>Regex Match</th>
+                        <th>Details / Error</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for h in history %}
+                    <tr>
+                        <td>{{ h.timestamp }}</td>
+                        <td>
+                            {% if h.is_up == 1 %}
+                                <span class="badge text-bg-success"><i class="bi bi-check-circle me-1"></i> PASS</span>
+                            {% else %}
+                                <span class="badge text-bg-danger"><i class="bi bi-x-circle me-1"></i> FAIL</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if h.status_code %}
+                                <span class="badge border text-body">{{ h.status_code }}</span>
+                            {% else %}
+                                <span class="text-body-secondary">-</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if h.response_time_ms is not none %}
+                                {{ h.response_time_ms }} ms
+                            {% else %}
+                                -
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if h.regex_matched == 1 %}
+                                <span class="badge text-bg-success-subtle text-success border border-success-subtle"><i class="bi bi-check"></i> Matched</span>
+                            {% elif h.regex_matched == 0 %}
+                                <span class="badge text-bg-danger-subtle text-danger border border-danger-subtle"><i class="bi bi-x"></i> Failed</span>
+                            {% else %}
+                                <span class="text-body-tertiary">N/A</span>
+                            {% endif %}
+                        </td>
+                        <td class="small text-danger">
+                            {{ h.error_message or '' }}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="text-center py-4 text-body-secondary">
+            No check history recorded yet for this monitor.
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

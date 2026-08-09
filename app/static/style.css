@@ -1,0 +1,29 @@
+/* Custom styles for Site Monitor */
+
+body {
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+}
+
+main {
+    flex: 1;
+}
+
+.table > :not(caption) > * > * {
+    padding: 0.85rem 0.75rem;
+}
+
+.card {
+    transition: transform 0.15s ease-in-out, box-shadow 0.15s ease-in-out;
+}
+
+.card:hover {
+    box-shadow: 0 0.5rem 1rem rgba(0, 0, 0, 0.15) !important;
+}
+
+code {
+    background-color: var(--bs-tertiary-bg);
+    padding: 0.2rem 0.4rem;
+    border-radius: 0.25rem;
+}

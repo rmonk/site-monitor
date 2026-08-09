@@ -1,0 +1,127 @@
+{% extends "base.html" %}
+
+{% block title %}Settings - Site Monitor{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-lg-10">
+        <h2 class="fw-bold mb-4"><i class="bi bi-gear-fill text-primary me-2"></i>Global Settings</h2>
+
+        <!-- Auth Mode Settings -->
+        <div class="card border-0 shadow-sm mb-4">
+            <div class="card-header bg-body py-3">
+                <h5 class="mb-0 fw-bold"><i class="bi bi-shield-lock me-2 text-primary"></i>Authentication & Access Control</h5>
+            </div>
+            <div class="card-body p-4">
+                <form action="/settings/auth" method="post">
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">Web Interface Access Mode</label>
+                        <div class="form-check mb-2">
+                            <input class="form-check-input" type="radio" name="auth_mode" id="auth_readonly" value="readonly_public" {% if settings.auth_mode == 'readonly_public' %}checked{% endif %}>
+                            <label class="form-check-label" for="auth_readonly">
+                                <strong>Allow Unauthenticated Read-Only Access</strong>
+                                <div class="text-body-secondary small">Guests can view dashboard and host statuses, but modifications (add/edit/delete/settings) require login.</div>
+                            </label>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input" type="radio" name="auth_mode" id="auth_required" value="require_login" {% if settings.auth_mode == 'require_login' %}checked{% endif %}>
+                            <label class="form-check-label" for="auth_required">
+                                <strong>Always Require Login</strong>
+                                <div class="text-body-secondary small">All access to the interface (including viewing status) requires logging in.</div>
+                            </label>
+                        </div>
+                    </div>
+                    <button type="submit" class="btn btn-primary btn-sm px-3">Save Auth Mode</button>
+                </form>
+            </div>
+        </div>
+
+        <!-- Global Repeat Alert Defaults -->
+        <div class="card border-0 shadow-sm mb-4">
+            <div class="card-header bg-body py-3">
+                <h5 class="mb-0 fw-bold"><i class="bi bi-bell me-2 text-primary"></i>Global Repeat Alert Defaults</h5>
+            </div>
+            <div class="card-body p-4">
+                <form action="/settings/alerts-default" method="post">
+                    <div class="mb-3 form-check form-switch">
+                        <input class="form-check-input" type="checkbox" role="switch" id="default_repeat_alerts" name="default_repeat_alerts" value="true" {% if settings.default_repeat_alerts == 'true' %}checked{% endif %}>
+                        <label class="form-check-label fw-bold" for="default_repeat_alerts">Enable Repeat Alerts by Default</label>
+                        <div class="form-text">When enabled, down alerts will repeat periodically if the site remains down. Hosts can override this individually.</div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="default_repeat_interval_minutes" class="form-label fw-bold">Default Repeat Interval (minutes)</label>
+                        <input type="number" class="form-control" id="default_repeat_interval_minutes" name="default_repeat_interval_minutes" min="1" value="{{ settings.default_repeat_interval_minutes or '60' }}" required>
+                        <div class="form-text">Time in minutes between repeated failure notifications.</div>
+                    </div>
+
+                    <button type="submit" class="btn btn-primary btn-sm px-3">Save Repeat Defaults</button>
+                </form>
+            </div>
+        </div>
+
+        <!-- Pushover Configuration -->
+        <div class="card border-0 shadow-sm mb-4">
+            <div class="card-header bg-body py-3 d-flex align-items-center justify-content-between">
+                <h5 class="mb-0 fw-bold"><i class="bi bi-send me-2 text-primary"></i>Pushover Integration</h5>
+            </div>
+            <div class="card-body p-4">
+                <form action="/settings/pushover" method="post">
+                    <div class="mb-3 form-check form-switch">
+                        <input class="form-check-input" type="checkbox" role="switch" id="pushover_enabled" name="pushover_enabled" value="true" {% if settings.pushover_enabled == 'true' %}checked{% endif %}>
+                        <label class="form-check-label fw-bold" for="pushover_enabled">Enable Pushover Notifications</label>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="pushover_api_token" class="form-label fw-bold">Pushover Application API Token</label>
+                        <input type="text" class="form-control font-monospace" id="pushover_api_token" name="pushover_api_token" value="{{ settings.pushover_api_token or '' }}" placeholder="e.g. azxxxxxxxxxxxxxxxxxxxxxxxxxxxx">
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="pushover_user_key" class="form-label fw-bold">Pushover User or Group Key</label>
+                        <input type="text" class="form-control font-monospace" id="pushover_user_key" name="pushover_user_key" value="{{ settings.pushover_user_key or '' }}" placeholder="e.g. uKxxxxxxxxxxxxxxxxxxxxxxxxxxxx">
+                    </div>
+
+                    <div class="d-flex gap-2">
+                        <button type="submit" class="btn btn-primary btn-sm px-3">Save Pushover Settings</button>
+                    </div>
+                </form>
+
+                <hr class="my-4">
+
+                <form action="/settings/pushover/test" method="post" class="d-inline">
+                    <button type="submit" class="btn btn-outline-info btn-sm">
+                        <i class="bi bi-paperplane me-1"></i> Send Test Notification
+                    </button>
+                    <span class="text-body-secondary ms-2 small">Sends a test alert using current Pushover credentials</span>
+                </form>
+            </div>
+        </div>
+
+        <!-- Change Password -->
+        <div class="card border-0 shadow-sm mb-4">
+            <div class="card-header bg-body py-3">
+                <h5 class="mb-0 fw-bold"><i class="bi bi-key me-2 text-primary"></i>Change Admin Password</h5>
+            </div>
+            <div class="card-body p-4">
+                <form action="/settings/password" method="post">
+                    <div class="mb-3">
+                        <label for="old_password" class="form-label fw-bold">Current Password</label>
+                        <input type="password" class="form-control" id="old_password" name="old_password" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="new_password" class="form-label fw-bold">New Password</label>
+                        <input type="password" class="form-control" id="new_password" name="new_password" minlength="4" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="confirm_password" class="form-label fw-bold">Confirm New Password</label>
+                        <input type="password" class="form-control" id="confirm_password" name="confirm_password" minlength="4" required>
+                    </div>
+                    <button type="submit" class="btn btn-warning btn-sm px-3">Update Password</button>
+                </form>
+            </div>
+        </div>
+
+    </div>
+</div>
+{% endblock %}

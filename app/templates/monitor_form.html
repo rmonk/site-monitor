@@ -1,0 +1,106 @@
+{% extends "base.html" %}
+
+{% block title %}{% if monitor %}Edit {{ monitor.name }}{% else %}Add New Monitor{% endif %} - Site Monitor{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-lg-8">
+        <div class="card border-0 shadow-sm">
+            <div class="card-header bg-body py-3">
+                <h4 class="mb-0 fw-bold">
+                    {% if monitor %}
+                        <i class="bi bi-pencil me-2 text-primary"></i>Edit Monitor
+                    {% else %}
+                        <i class="bi bi-plus-circle me-2 text-primary"></i>Add New Website Monitor
+                    {% endif %}
+                </h4>
+            </div>
+            <div class="card-body p-4">
+                <form action="{% if monitor %}/monitors/{{ monitor.id }}/edit{% else %}/monitors/new{% endif %}" method="post">
+                    
+                    <div class="mb-3">
+                        <label for="name" class="form-label fw-bold">Monitor Name</label>
+                        <input type="text" class="form-control" id="name" name="name" placeholder="e.g. My Website, API Server" value="{{ monitor.name if monitor else '' }}" required>
+                        <div class="form-text">A descriptive name for this host/website.</div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="url" class="form-label fw-bold">Target URL</label>
+                        <input type="url" class="form-control" id="url" name="url" placeholder="https://example.com" value="{{ monitor.url if monitor else '' }}" required>
+                        <div class="form-text">Full HTTP or HTTPS URL to monitor.</div>
+                    </div>
+
+                    <div class="row g-3 mb-3">
+                        <div class="col-md-6">
+                            <label for="check_interval" class="form-label fw-bold">Check Interval (seconds)</label>
+                            <input type="number" class="form-control" id="check_interval" name="check_interval" min="5" value="{{ monitor.check_interval if monitor else 60 }}" required>
+                            <div class="form-text">How often to perform HTTP health check.</div>
+                        </div>
+
+                        <div class="col-md-6">
+                            <label for="timeout" class="form-label fw-bold">Request Timeout (seconds)</label>
+                            <input type="number" class="form-control" id="timeout" name="timeout" min="1" max="60" value="{{ monitor.timeout if monitor else 10 }}" required>
+                            <div class="form-text">HTTP request timeout threshold.</div>
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="regex_pattern" class="form-label fw-bold">Optional Response Body Regex</label>
+                        <input type="text" class="form-control font-monospace" id="regex_pattern" name="regex_pattern" placeholder="e.g. System Normal|Status: OK" value="{{ monitor.regex_pattern if monitor and monitor.regex_pattern else '' }}">
+                        <div class="form-text">If set, the HTTP check will fail if this regex is NOT found in the HTTP response body.</div>
+                    </div>
+
+                    <div class="hr-text text-body-secondary my-4 border-top pt-3"><strong>Alert & Notification Options</strong></div>
+
+                    <div class="mb-3">
+                        <label for="failure_threshold" class="form-label fw-bold">Failure Count Before Alert</label>
+                        <input type="number" class="form-control" id="failure_threshold" name="failure_threshold" min="1" value="{{ monitor.failure_threshold if monitor else 1 }}" required>
+                        <div class="form-text">Number of consecutive check failures required before sending an alert (e.g. 1 = alert immediately on 1st fail).</div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">Repeat Alerts Configuration</label>
+                        <div class="form-check">
+                            <input class="form-check-input" type="radio" name="repeat_alerts" id="repeat_default" value="default" {% if not monitor or monitor.repeat_alerts is none %}checked{% endif %}>
+                            <label class="form-check-label" for="repeat_default">
+                                Inherit Global Default Setting
+                            </label>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input" type="radio" name="repeat_alerts" id="repeat_enable" value="1" {% if monitor and monitor.repeat_alerts == 1 %}checked{% endif %}>
+                            <label class="form-check-label" for="repeat_enable">
+                                Always Enable Repeat Alerts for this Host
+                            </label>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input" type="radio" name="repeat_alerts" id="repeat_disable" value="0" {% if monitor and monitor.repeat_alerts == 0 %}checked{% endif %}>
+                            <label class="form-check-label" for="repeat_disable">
+                                Disable Repeat Alerts for this Host
+                            </label>
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="repeat_interval_minutes" class="form-label fw-bold">Host Specific Repeat Interval (minutes)</label>
+                        <input type="number" class="form-control" id="repeat_interval_minutes" name="repeat_interval_minutes" min="1" placeholder="Leave empty to use global default" value="{{ monitor.repeat_interval_minutes if monitor and monitor.repeat_interval_minutes else '' }}">
+                        <div class="form-text">Override global repeat interval (e.g. repeat alert every 30 minutes). Leave blank for default.</div>
+                    </div>
+
+                    <div class="mb-4 form-check form-switch">
+                        <input class="form-check-input" type="checkbox" role="switch" id="is_active" name="is_active" value="1" {% if not monitor or monitor.is_active == 1 %}checked{% endif %}>
+                        <label class="form-check-label fw-bold" for="is_active">Active Monitoring Enabled</label>
+                    </div>
+
+                    <div class="d-flex justify-content-between align-items-center pt-2 border-top">
+                        <a href="/" class="btn btn-outline-secondary">Cancel</a>
+                        <button type="submit" class="btn btn-primary px-4">
+                            {% if monitor %}Save Changes{% else %}Create Monitor{% endif %}
+                        </button>
+                    </div>
+
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
