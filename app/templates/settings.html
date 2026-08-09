@@ -36,13 +36,21 @@
             </div>
         </div>
 
-        <!-- Global Repeat Alert Defaults -->
+        <!-- Global Monitoring Defaults -->
         <div class="card border-0 shadow-sm mb-4">
             <div class="card-header bg-body py-3">
-                <h5 class="mb-0 fw-bold"><i class="bi bi-bell me-2 text-primary"></i>Global Repeat Alert Defaults</h5>
+                <h5 class="mb-0 fw-bold"><i class="bi bi-sliders me-2 text-primary"></i>Global Monitoring Defaults</h5>
             </div>
             <div class="card-body p-4">
                 <form action="/settings/alerts-default" method="post">
+                    <div class="mb-3 form-check form-switch">
+                        <input class="form-check-input" type="checkbox" role="switch" id="default_capture_screenshots" name="default_capture_screenshots" value="true" {% if settings.default_capture_screenshots != 'false' %}checked{% endif %}>
+                        <label class="form-check-label fw-bold" for="default_capture_screenshots">Enable Request Screenshots by Default</label>
+                        <div class="form-text">When enabled, visual request screenshots will be automatically captured during site health checks. Hosts can override this individually.</div>
+                    </div>
+
+                    <hr class="my-3">
+
                     <div class="mb-3 form-check form-switch">
                         <input class="form-check-input" type="checkbox" role="switch" id="default_repeat_alerts" name="default_repeat_alerts" value="true" {% if settings.default_repeat_alerts == 'true' %}checked{% endif %}>
                         <label class="form-check-label fw-bold" for="default_repeat_alerts">Enable Repeat Alerts by Default</label>
@@ -55,9 +63,10 @@
                         <div class="form-text">Time in minutes between repeated failure notifications.</div>
                     </div>
 
-                    <button type="submit" class="btn btn-primary btn-sm px-3">Save Repeat Defaults</button>
+                    <button type="submit" class="btn btn-primary btn-sm px-3">Save Defaults</button>
                 </form>
             </div>
+        </div>
         </div>
 
         <!-- Pushover Configuration -->

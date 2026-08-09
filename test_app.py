@@ -23,6 +23,7 @@ def setup_module(module):
 
 def test_initial_setup():
     assert get_setting("auth_mode") == "readonly_public"
+    assert get_setting("default_capture_screenshots") == "true"
     with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute("SELECT * FROM users WHERE username = 'testadmin'")
@@ -126,6 +127,48 @@ def test_screenshot_route():
     # Test non-existent file
     res_404 = client.get("/screenshots/nonexistent.png")
     assert res_404.status_code == 404
+
+def test_screenshot_settings():
+    login_res = client.post("/login", data={"username": "testadmin", "password": "testsecret123"}, follow_redirects=False)
+    session_token = login_res.cookies["session_token"]
+
+    # 1. Verify global default setting update
+    client.post("/settings/alerts-default", data={
+        "default_repeat_alerts": "true",
+        "default_repeat_interval_minutes": "60",
+        "default_capture_screenshots": "false"
+    }, cookies={"session_token": session_token})
+    assert get_setting("default_capture_screenshots") == "false"
+
+    client.post("/settings/alerts-default", data={
+        "default_repeat_alerts": "true",
+        "default_repeat_interval_minutes": "60",
+        "default_capture_screenshots": "true"
+    }, cookies={"session_token": session_token})
+    assert get_setting("default_capture_screenshots") == "true"
+
+    # 2. Test monitor creation with screenshot setting override (0 = disabled)
+    create_res = client.post("/monitors/new", data={
+        "name": "Screenshot Disabled Host",
+        "url": "https://example.com",
+        "check_interval": "60",
+        "timeout": "10",
+        "failure_threshold": "1",
+        "capture_screenshots": "0",
+        "is_active": "1"
+    }, cookies={"session_token": session_token}, follow_redirects=False)
+    assert create_res.status_code == 303
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM monitors WHERE name = 'Screenshot Disabled Host'")
+        m = cursor.fetchone()
+        assert m is not None
+        assert m["capture_screenshots"] == 0
+        m_id = m["id"]
+
+    # Delete test monitor
+    client.post(f"/monitors/{m_id}/delete", cookies={"session_token": session_token})
 
 def test_require_login_mode():
     login_res = client.post("/login", data={"username": "testadmin", "password": "testsecret123"}, follow_redirects=False)

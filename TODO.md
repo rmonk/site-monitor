@@ -45,3 +45,13 @@
   - [x] Update `Dockerfile` & `requirements.txt` to include necessary headless browser / playwright dependencies
   - [x] Update automated tests & run full test suite
   - [x] Merge to `main` and push to remote
+
+- [ ] **8. Configurable Screenshot Settings (Global & Per-Monitor)**
+  - [ ] Add `default_capture_screenshots` setting (default: `true`) in SQLite DB
+  - [ ] Add `capture_screenshots` column to `monitors` table (NULL = inherit default, 1 = enable, 0 = disable)
+  - [ ] Update background checker / monitor logic to honor per-monitor and global screenshot configuration
+  - [ ] Add Screenshot Capture toggle to Global Settings page
+  - [ ] Add Screenshot Capture radio options to Add/Edit Monitor forms
+  - [ ] Show screenshot configuration indicator on Host Details page
+  - [ ] Update unit tests & verify all tests pass
+  - [ ] Merge to `main` and push to remote

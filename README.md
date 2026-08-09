@@ -20,6 +20,7 @@ A lightweight, containerized website monitoring application with a web UI and Pu
   - Configurable target URL and check interval (seconds).
   - Customizable request timeout (seconds).
   - **Regex Content Verification**: Optionally verify response body against regex pattern in addition to HTTP status codes (2xx/3xx).
+  - **Visual Request Screenshots**: Captures screenshots of requests (last successful request and current failure request). Configurable globally (enabled by default) with per-host overrides (enable/disable/inherit default).
 
 - **Flexible Alerting System (Pushover)**:
   - **Failure Thresholds**: Configure consecutive failure counts required before triggering an alert.

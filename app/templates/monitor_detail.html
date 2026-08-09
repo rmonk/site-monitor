@@ -118,7 +118,15 @@
 <div class="card border-0 shadow-sm mb-4">
     <div class="card-header bg-body py-3 d-flex align-items-center justify-content-between">
         <h5 class="mb-0 fw-bold"><i class="bi bi-camera-fill me-2 text-primary"></i>Request Screenshots</h5>
-        <span class="text-body-secondary small">Visual check captures</span>
+        <span class="text-body-secondary small">
+            {% if monitor.capture_screenshots == 1 %}
+                <span class="badge text-bg-success-subtle text-success border border-success-subtle"><i class="bi bi-camera me-1"></i> Always Enabled</span>
+            {% elif monitor.capture_screenshots == 0 %}
+                <span class="badge text-bg-secondary-subtle text-secondary border border-secondary-subtle"><i class="bi bi-camera-video-off me-1"></i> Disabled</span>
+            {% else %}
+                <span class="badge text-bg-light border"><i class="bi bi-camera me-1"></i> Global Default ({% if default_capture_screenshots %}Enabled{% else %}Disabled{% endif %})</span>
+            {% endif %}
+        </span>
     </div>
     <div class="card-body p-4">
         <div class="row g-4">

@@ -50,7 +50,29 @@
                         <div class="form-text">If set, the HTTP check will fail if this regex is NOT found in the HTTP response body.</div>
                     </div>
 
-                    <div class="hr-text text-body-secondary my-4 border-top pt-3"><strong>Alert & Notification Options</strong></div>
+                    <div class="hr-text text-body-secondary my-4 border-top pt-3"><strong>Screenshot & Alert Options</strong></div>
+
+                    <div class="mb-4">
+                        <label class="form-label fw-bold">Screenshot Capture Configuration</label>
+                        <div class="form-check">
+                            <input class="form-check-input" type="radio" name="capture_screenshots" id="capture_default" value="default" {% if not monitor or monitor.capture_screenshots is none %}checked{% endif %}>
+                            <label class="form-check-label" for="capture_default">
+                                Inherit Global Default Setting
+                            </label>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input" type="radio" name="capture_screenshots" id="capture_enable" value="1" {% if monitor and monitor.capture_screenshots == 1 %}checked{% endif %}>
+                            <label class="form-check-label" for="capture_enable">
+                                Always Enable Screenshots for this Host
+                            </label>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input" type="radio" name="capture_screenshots" id="capture_disable" value="0" {% if monitor and monitor.capture_screenshots == 0 %}checked{% endif %}>
+                            <label class="form-check-label" for="capture_disable">
+                                Disable Screenshots for this Host
+                            </label>
+                        </div>
+                    </div>
 
                     <div class="mb-3">
                         <label for="failure_threshold" class="form-label fw-bold">Failure Count Before Alert</label>

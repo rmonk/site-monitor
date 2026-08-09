@@ -60,6 +60,7 @@ def init_db():
                 repeat_alerts INTEGER DEFAULT NULL,
                 repeat_interval_minutes INTEGER DEFAULT NULL,
                 is_active INTEGER NOT NULL DEFAULT 1,
+                capture_screenshots INTEGER DEFAULT NULL,
                 last_success_screenshot_time TEXT,
                 last_failed_screenshot_time TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -70,6 +71,8 @@ def init_db():
         # Add columns if migrating from older schema version
         cursor.execute("PRAGMA table_info(monitors);")
         columns = [row["name"] for row in cursor.fetchall()]
+        if "capture_screenshots" not in columns:
+            cursor.execute("ALTER TABLE monitors ADD COLUMN capture_screenshots INTEGER DEFAULT NULL;")
         if "last_success_screenshot_time" not in columns:
             cursor.execute("ALTER TABLE monitors ADD COLUMN last_success_screenshot_time TEXT;")
         if "last_failed_screenshot_time" not in columns:
@@ -109,7 +112,8 @@ def init_db():
             "pushover_api_token": "",
             "pushover_user_key": "",
             "default_repeat_alerts": "true",
-            "default_repeat_interval_minutes": "60"
+            "default_repeat_interval_minutes": "60",
+            "default_capture_screenshots": "true"
         }
 
         for key, val in default_settings.items():

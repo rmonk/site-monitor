@@ -207,14 +207,17 @@ async def monitor_new_post(request: Request):
     rep_int_val = str(form_data.get("repeat_interval_minutes", "")).strip()
     repeat_interval_minutes = int(rep_int_val) if rep_int_val else None
 
+    capture_val = form_data.get("capture_screenshots")
+    capture_screenshots = 1 if capture_val == "1" else (0 if capture_val == "0" else None)
+
     is_active = 1 if form_data.get("is_active") == "1" else 0
 
     with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute("""
-            INSERT INTO monitors (name, url, check_interval, timeout, regex_pattern, failure_threshold, repeat_alerts, repeat_interval_minutes, is_active)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (name, url, check_interval, timeout, regex_pattern, failure_threshold, repeat_alerts, repeat_interval_minutes, is_active))
+            INSERT INTO monitors (name, url, check_interval, timeout, regex_pattern, failure_threshold, repeat_alerts, repeat_interval_minutes, capture_screenshots, is_active)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (name, url, check_interval, timeout, regex_pattern, failure_threshold, repeat_alerts, repeat_interval_minutes, capture_screenshots, is_active))
 
     return RedirectResponse(url="/?msg=Monitor+created+successfully&type=success", status_code=status.HTTP_303_SEE_OTHER)
 
@@ -244,6 +247,7 @@ async def monitor_detail(request: Request, monitor_id: int):
 
     default_repeat = get_setting("default_repeat_alerts", "true").lower() in ("true", "1", "yes")
     default_repeat_interval = get_setting("default_repeat_interval_minutes", "60")
+    default_capture_screenshots = get_setting("default_capture_screenshots", "true").lower() in ("true", "1", "yes")
 
     ctx = get_template_context(request)
     ctx.update({
@@ -251,7 +255,8 @@ async def monitor_detail(request: Request, monitor_id: int):
         "alert_state": dict(a_state) if a_state else None,
         "history": history,
         "default_repeat_alerts": default_repeat,
-        "default_repeat_interval": default_repeat_interval
+        "default_repeat_interval": default_repeat_interval,
+        "default_capture_screenshots": default_capture_screenshots
     })
     return templates.TemplateResponse(request, "monitor_detail.html", ctx)
 
@@ -289,6 +294,9 @@ async def monitor_edit_post(request: Request, monitor_id: int):
     rep_int_val = str(form_data.get("repeat_interval_minutes", "")).strip()
     repeat_interval_minutes = int(rep_int_val) if rep_int_val else None
 
+    capture_val = form_data.get("capture_screenshots")
+    capture_screenshots = 1 if capture_val == "1" else (0 if capture_val == "0" else None)
+
     is_active = 1 if form_data.get("is_active") == "1" else 0
 
     with get_db() as conn:
@@ -296,10 +304,10 @@ async def monitor_edit_post(request: Request, monitor_id: int):
         cursor.execute("""
             UPDATE monitors
             SET name = ?, url = ?, check_interval = ?, timeout = ?, regex_pattern = ?,
-                failure_threshold = ?, repeat_alerts = ?, repeat_interval_minutes = ?, is_active = ?,
+                failure_threshold = ?, repeat_alerts = ?, repeat_interval_minutes = ?, capture_screenshots = ?, is_active = ?,
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
-        """, (name, url, check_interval, timeout, regex_pattern, failure_threshold, repeat_alerts, repeat_interval_minutes, is_active, monitor_id))
+        """, (name, url, check_interval, timeout, regex_pattern, failure_threshold, repeat_alerts, repeat_interval_minutes, capture_screenshots, is_active, monitor_id))
 
     return RedirectResponse(url=f"/monitors/{monitor_id}?msg=Monitor+updated+successfully&type=success", status_code=status.HTTP_303_SEE_OTHER)
 
@@ -358,11 +366,13 @@ async def settings_alerts_default_post(request: Request):
     form_data = await request.form()
     default_repeat = "true" if form_data.get("default_repeat_alerts") == "true" else "false"
     repeat_interval = str(form_data.get("default_repeat_interval_minutes", "60")).strip()
+    default_screenshots = "true" if form_data.get("default_capture_screenshots") == "true" else "false"
 
     set_setting("default_repeat_alerts", default_repeat)
     set_setting("default_repeat_interval_minutes", repeat_interval)
+    set_setting("default_capture_screenshots", default_screenshots)
 
-    return RedirectResponse(url="/settings?msg=Global+repeat+alert+defaults+updated&type=success", status_code=status.HTTP_303_SEE_OTHER)
+    return RedirectResponse(url="/settings?msg=Global+monitoring+defaults+updated&type=success", status_code=status.HTTP_303_SEE_OTHER)
 
 
 @app.post("/settings/pushover")

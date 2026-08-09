@@ -71,29 +71,38 @@ async def check_monitor(monitor: Dict[str, Any]) -> Dict[str, Any]:
 
     now_ts = int(time.time())
 
-    # Capture screenshot asynchronously
-    screenshot_ts = await capture_screenshot(
-        monitor_id=monitor_id,
-        url=url,
-        is_success=is_up,
-        error_message=error_message or ""
-    )
+    # Determine whether to capture screenshot
+    if monitor.get("capture_screenshots") is not None:
+        should_capture_screenshots = bool(monitor["capture_screenshots"])
+    else:
+        global_screenshots = get_setting("default_capture_screenshots", "true")
+        should_capture_screenshots = global_screenshots.lower() in ("true", "1", "yes")
+
+    screenshot_ts = None
+    if should_capture_screenshots:
+        screenshot_ts = await capture_screenshot(
+            monitor_id=monitor_id,
+            url=url,
+            is_success=is_up,
+            error_message=error_message or ""
+        )
 
     # Process check result in DB
     with get_db() as conn:
         cursor = conn.cursor()
 
-        # Update screenshot timestamp in monitors table
-        if is_up:
-            cursor.execute(
-                "UPDATE monitors SET last_success_screenshot_time = ? WHERE id = ?",
-                (screenshot_ts, monitor_id)
-            )
-        else:
-            cursor.execute(
-                "UPDATE monitors SET last_failed_screenshot_time = ? WHERE id = ?",
-                (screenshot_ts, monitor_id)
-            )
+        # Update screenshot timestamp in monitors table if captured
+        if screenshot_ts:
+            if is_up:
+                cursor.execute(
+                    "UPDATE monitors SET last_success_screenshot_time = ? WHERE id = ?",
+                    (screenshot_ts, monitor_id)
+                )
+            else:
+                cursor.execute(
+                    "UPDATE monitors SET last_failed_screenshot_time = ? WHERE id = ?",
+                    (screenshot_ts, monitor_id)
+                )
 
         # 1. Record check history
         cursor.execute("""
