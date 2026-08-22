@@ -119,7 +119,9 @@ def init_db():
             "theme_custom_primary": "#0d6efd",
             "theme_custom_bg": "#f8f9fa",
             "theme_custom_card": "#ffffff",
-            "theme_custom_text": "#212529"
+            "theme_custom_text": "#212529",
+            "heartbeat_ping_url": "",
+            "heartbeat_ping_interval_minutes": "15"
         }
 
         for key, val in default_settings.items():

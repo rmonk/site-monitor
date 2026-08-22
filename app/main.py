@@ -1,8 +1,9 @@
 import asyncio
+import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Dict, Any
 
 from fastapi import FastAPI, Request, Response, HTTPException, status, Depends
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
@@ -18,7 +19,7 @@ from app.auth import (
     get_current_user, is_authenticated, check_access
 )
 from app.alerts import send_test_alert
-from app.monitor import check_monitor, monitoring_worker_loop
+from app.monitor import check_monitor, monitoring_worker_loop, watchdog_worker_loop, get_worker_heartbeat
 from app.screenshots import get_screenshots_dir
 from fastapi.responses import FileResponse
 
@@ -27,10 +28,15 @@ from fastapi.responses import FileResponse
 async def lifespan(app: FastAPI):
     # Startup logic
     init_db()
-    bg_task = asyncio.create_task(monitoring_worker_loop())
+    task_holder: Dict[str, Any] = {}
+    task_holder["worker_task"] = asyncio.create_task(monitoring_worker_loop())
+    task_holder["watchdog_task"] = asyncio.create_task(watchdog_worker_loop(task_holder))
     yield
     # Shutdown logic
-    bg_task.cancel()
+    if task_holder.get("worker_task"):
+        task_holder["worker_task"].cancel()
+    if task_holder.get("watchdog_task"):
+        task_holder["watchdog_task"].cancel()
 
 
 app = FastAPI(title="Site Monitor", docs_url=None, redoc_url=None, lifespan=lifespan)
@@ -90,6 +96,59 @@ def get_template_context(request: Request, active_page: str = "", msg: str = "",
     }
 
 # --- Routes ---
+
+@app.get("/healthz")
+async def healthz():
+    """
+    Service healthcheck endpoint for Docker / monitoring orchestrators.
+    Returns HTTP 200 if healthy, HTTP 503 if worker is stalled or database unreachable.
+    """
+    db_ok = False
+    active_monitors_count = 0
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) as count FROM monitors WHERE is_active = 1")
+            row = cursor.fetchone()
+            active_monitors_count = row["count"] if row else 0
+            db_ok = True
+    except Exception as e:
+        return JSONResponse(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            content={"status": "unhealthy", "database": False, "error": str(e)}
+        )
+
+    heartbeat = get_worker_heartbeat()
+    heartbeat_age = round(time.time() - heartbeat, 1)
+
+    # If active monitors exist, worker heartbeat should not exceed 180s
+    worker_ok = True
+    if active_monitors_count > 0 and heartbeat_age > 180.0:
+        worker_ok = False
+
+    if not worker_ok:
+        return JSONResponse(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            content={
+                "status": "unhealthy",
+                "database": True,
+                "worker_alive": False,
+                "heartbeat_age_seconds": heartbeat_age,
+                "active_monitors": active_monitors_count
+            }
+        )
+
+    return JSONResponse(
+        status_code=status.HTTP_200_OK,
+        content={
+            "status": "healthy",
+            "database": True,
+            "worker_alive": True,
+            "heartbeat_age_seconds": heartbeat_age,
+            "active_monitors": active_monitors_count
+        }
+    )
+
 
 @app.get("/", response_class=HTMLResponse)
 async def dashboard(request: Request):
@@ -435,6 +494,19 @@ async def settings_alerts_default_post(request: Request):
     set_setting("default_capture_screenshots", default_screenshots)
 
     return RedirectResponse(url="/settings?msg=Global+monitoring+defaults+updated&type=success", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@app.post("/settings/heartbeat")
+async def settings_heartbeat_post(request: Request):
+    check_access(request, require_write=True)
+    form_data = await request.form()
+    ping_url = str(form_data.get("heartbeat_ping_url", "")).strip()
+    ping_interval = str(form_data.get("heartbeat_ping_interval_minutes", "15")).strip()
+
+    set_setting("heartbeat_ping_url", ping_url)
+    set_setting("heartbeat_ping_interval_minutes", ping_interval)
+
+    return RedirectResponse(url="/settings?msg=Heartbeat+configuration+saved&type=success", status_code=status.HTTP_303_SEE_OTHER)
 
 
 @app.post("/settings/pushover")

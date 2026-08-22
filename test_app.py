@@ -230,3 +230,28 @@ def test_require_login_mode():
     anon_res = unauth_client.get("/", follow_redirects=False)
     assert anon_res.status_code == 303
     assert "/login" in anon_res.headers["location"]
+
+def test_healthz_endpoint():
+    # 1. Healthz endpoint should return 200 and healthy status
+    res = client.get("/healthz")
+    assert res.status_code == 200
+    data = res.json()
+    assert data["status"] == "healthy"
+    assert data["database"] is True
+    assert data["worker_alive"] is True
+    assert "heartbeat_age_seconds" in data
+
+def test_heartbeat_settings():
+    login_res = client.post("/login", data={"username": "testadmin", "password": "testsecret123"}, follow_redirects=False)
+    session_token = login_res.cookies["session_token"]
+
+    # Save heartbeat settings
+    res = client.post("/settings/heartbeat", data={
+        "heartbeat_ping_url": "https://hc-ping.com/12345-test",
+        "heartbeat_ping_interval_minutes": "30"
+    }, cookies={"session_token": session_token}, follow_redirects=False)
+    assert res.status_code == 303
+
+    assert get_setting("heartbeat_ping_url") == "https://hc-ping.com/12345-test"
+    assert get_setting("heartbeat_ping_interval_minutes") == "30"
+

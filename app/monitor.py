@@ -298,6 +298,17 @@ async def _safe_check_monitor(monitor: Dict[str, Any]):
             logger.error(f"Unhandled error checking monitor '{monitor.get('name')}': {e}")
 
 
+_worker_heartbeat: float = time.time()
+
+def get_worker_heartbeat() -> float:
+    global _worker_heartbeat
+    return _worker_heartbeat
+
+def update_worker_heartbeat():
+    global _worker_heartbeat
+    _worker_heartbeat = time.time()
+
+
 async def monitoring_worker_loop():
     """
     Background worker loop that checks active monitors based on their check intervals.
@@ -307,6 +318,7 @@ async def monitoring_worker_loop():
 
     logger.info("Starting site monitoring worker loop...")
     while True:
+        update_worker_heartbeat()
         try:
             with get_db() as conn:
                 cursor = conn.cursor()
@@ -335,4 +347,87 @@ async def monitoring_worker_loop():
             logger.error(f"Error in monitoring loop: {e}")
 
         await asyncio.sleep(5)  # Check every 5 seconds for due monitors
+
+
+async def watchdog_worker_loop(task_holder: Optional[Dict[str, Any]] = None):
+    """
+    Independent watchdog task that monitors the health of the background worker loop,
+    sends Pushover emergency alerts if the worker stalls, triggers auto-recovery,
+    and sends periodic Dead Man's Switch external heartbeat pings.
+    """
+    logger.info("Starting site monitoring watchdog loop...")
+    watchdog_alert_sent = False
+    last_ping_time = 0.0
+
+    while True:
+        try:
+            now = time.time()
+            heartbeat = get_worker_heartbeat()
+            stalled_duration = now - heartbeat
+
+            # 1. Check if worker is stalled (>180 seconds)
+            if stalled_duration > 180.0:
+                has_active_monitors = False
+                try:
+                    with get_db() as conn:
+                        cursor = conn.cursor()
+                        cursor.execute("SELECT COUNT(*) as cnt FROM monitors WHERE is_active = 1")
+                        row = cursor.fetchone()
+                        has_active_monitors = bool(row and row["cnt"] > 0)
+                except Exception as db_err:
+                    logger.error(f"Watchdog DB check error: {db_err}")
+                    has_active_monitors = True
+
+                if has_active_monitors:
+                    logger.critical(f"WATCHDOG: Monitoring worker stalled! No heartbeat for {int(stalled_duration)}s.")
+                    if not watchdog_alert_sent:
+                        await send_pushover_notification(
+                            title="CRITICAL: Site Monitor Worker Stalled",
+                            message=f"Site Monitor background worker has stopped responding (no heartbeat for {int(stalled_duration)}s).\nAttempting automatic task restart.",
+                            priority=1
+                        )
+                        watchdog_alert_sent = True
+
+                    # Trigger auto-recovery if task_holder provided
+                    if task_holder and "worker_task" in task_holder:
+                        old_task = task_holder["worker_task"]
+                        if old_task and not old_task.done():
+                            logger.info("Watchdog cancelling stalled worker task...")
+                            old_task.cancel()
+                        logger.info("Watchdog relaunching monitoring_worker_loop...")
+                        task_holder["worker_task"] = asyncio.create_task(monitoring_worker_loop())
+                        update_worker_heartbeat()
+            else:
+                if watchdog_alert_sent and stalled_duration < 60.0:
+                    # Worker recovered
+                    await send_pushover_notification(
+                        title="RECOVERED: Site Monitor Worker Resumed",
+                        message="Site Monitor background monitoring worker has recovered and resumed normal operation.",
+                        priority=0
+                    )
+                    watchdog_alert_sent = False
+
+            # 2. External Heartbeat Ping (Dead Man's Switch)
+            try:
+                ping_url = get_setting("heartbeat_ping_url", "").strip()
+                if ping_url:
+                    try:
+                        interval_mins = int(get_setting("heartbeat_ping_interval_minutes", "15"))
+                    except ValueError:
+                        interval_mins = 15
+                    interval_secs = max(60, interval_mins * 60)
+
+                    if now - last_ping_time >= interval_secs:
+                        last_ping_time = now
+                        async with httpx.AsyncClient(timeout=10.0) as client:
+                            resp = await client.get(ping_url)
+                            logger.info(f"Dead Man's Switch external ping sent to {ping_url} (HTTP {resp.status_code})")
+            except Exception as ping_err:
+                logger.warning(f"Failed to send Dead Man's Switch external ping: {ping_err}")
+
+        except Exception as e:
+            logger.error(f"Error in watchdog loop: {e}")
+
+        await asyncio.sleep(30)
+
 

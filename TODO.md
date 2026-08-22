@@ -78,4 +78,15 @@
   - [x] Verify integration & resilience tests pass
   - [x] Commit to `devel`, merge to `main`, and push to remote `origin`
 
+- [x] **11. Watchdog, Self-Healing, /healthz & Dead Man's Switch**
+  - [x] Add heartbeat tracking (`get_worker_heartbeat()`, `update_worker_heartbeat()`) in `app/monitor.py`
+  - [x] Implement independent `watchdog_worker_loop()` with emergency Pushover alerting and auto-task restart
+  - [x] Implement `GET /healthz` endpoint with database and heartbeat freshness evaluation
+  - [x] Add `HEALTHCHECK` directive in `Dockerfile` testing `/healthz` via `curl`
+  - [x] Add Dead Man's Switch settings (`heartbeat_ping_url`, `heartbeat_ping_interval_minutes`) and Settings UI card
+  - [x] Add automated unit tests in `test_app.py` for `/healthz` and heartbeat settings
+  - [x] Commit to `devel`, merge to `main`, and push to remote `origin`
+
+
+
 

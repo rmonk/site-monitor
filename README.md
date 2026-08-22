@@ -38,6 +38,12 @@ A lightweight, containerized website monitoring application with a web UI and Pu
   - **Always Require Login**: Secures all routes behind admin authentication.
   - Configurable initial admin credentials via environment variables (`INITIAL_ADMIN_USER`, `INITIAL_ADMIN_PASSWORD`).
 
+- **Reliability & Self-Healing Watchdog**:
+  - **Internal Watchdog Loop**: Monitors background health check worker heartbeat and auto-restarts stalled tasks.
+  - **Pushover Internal Failure Alerting**: Automatically alerts the user via Pushover if the monitoring worker becomes unresponsive (>3 min).
+  - **Container Healthcheck (`/healthz`)**: Built-in HTTP health endpoint and Docker container `HEALTHCHECK` for automated container restarts.
+  - **Dead Man's Switch**: Configurable outbound heartbeat ping to external services (e.g., [Healthchecks.io](https://healthchecks.io), Cronitor) to detect full host or network outages.
+
 - **SQLite Database**:
   - Automated database initialization and migrations stored in a single file (`/data/site-monitor.db`).
   - Automatic history log pruning to maintain fast performance over time.

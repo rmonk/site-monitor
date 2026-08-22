@@ -30,6 +30,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libasound2t64 \
     fonts-liberation \
     tini \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python packages & Playwright Chromium browser
@@ -43,6 +44,10 @@ COPY app/ ./app/
 # Expose container port & setup volume for SQLite persistence
 EXPOSE 8000
 VOLUME ["/data"]
+
+# Container healthcheck against /healthz
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+    CMD curl -f http://localhost:8000/healthz || exit 1
 
 # Use tini as init process to reap zombie processes
 ENTRYPOINT ["/usr/bin/tini", "--"]
