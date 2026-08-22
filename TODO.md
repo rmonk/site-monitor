@@ -67,3 +67,15 @@
   - [x] Update CSS custom properties and dynamic styling in `base.html` / `style.css` / `app.js`
   - [x] Update automated tests in `test_app.py` & run full test suite
   - [x] Commit to `devel`, merge to `main`, and push to remote `origin`
+
+- [x] **10. Worker Resilience & Process Reaping Fixes**
+  - [x] Add `tini` as container entrypoint in `Dockerfile` to reap zombie processes from Chromium/Playwright
+  - [x] Add container flags (`--disable-dev-shm-usage`, `--no-sandbox`, `--disable-gpu`, `--no-zygote`) to Playwright launcher
+  - [x] Implement concurrency semaphore and strict 15s timeout guard in `app/screenshots.py`
+  - [x] Add smart screenshot throttling in `app/monitor.py` to prevent redundant browser launches for healthy hosts
+  - [x] Add per-task and batch timeout guards in `monitoring_worker_loop()`
+  - [x] Refactor Pushover alerting to asynchronous `httpx.AsyncClient` in `app/alerts.py`
+  - [x] Verify integration & resilience tests pass
+  - [x] Commit to `devel`, merge to `main`, and push to remote `origin`
+
+

@@ -12,9 +12,9 @@ def is_pushover_configured() -> bool:
     user = get_setting("pushover_user_key", "").strip()
     return enabled and bool(token) and bool(user)
 
-def send_pushover_notification(title: str, message: str, priority: int = 0) -> tuple[bool, str]:
+async def send_pushover_notification(title: str, message: str, priority: int = 0) -> tuple[bool, str]:
     """
-    Sends a Pushover notification.
+    Sends a Pushover notification asynchronously.
     Returns (success: bool, response_message: str).
     """
     if not is_pushover_configured():
@@ -32,8 +32,8 @@ def send_pushover_notification(title: str, message: str, priority: int = 0) -> t
     }
 
     try:
-        with httpx.Client(timeout=10.0) as client:
-            resp = client.post(PUSHOVER_URL, data=data)
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(PUSHOVER_URL, data=data)
             if resp.status_code == 200:
                 logger.info(f"Pushover notification sent: {title}")
                 return True, "Notification sent successfully"
@@ -46,10 +46,11 @@ def send_pushover_notification(title: str, message: str, priority: int = 0) -> t
         logger.error(err)
         return False, err
 
-def send_test_alert() -> tuple[bool, str]:
-    """Sends a test Pushover notification."""
-    return send_pushover_notification(
+async def send_test_alert() -> tuple[bool, str]:
+    """Sends a test Pushover notification asynchronously."""
+    return await send_pushover_notification(
         title="Site Monitor - Test Alert",
         message="This is a test notification from your Site Monitor instance.",
         priority=0
     )
+

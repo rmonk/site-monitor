@@ -360,7 +360,7 @@ async def monitor_check_now(request: Request, monitor_id: int):
         if not m_row:
             raise HTTPException(status_code=404, detail="Monitor not found")
 
-    result = await check_monitor(dict(m_row))
+    result = await check_monitor(dict(m_row), is_manual=True)
     status_msg = "UP" if result["is_up"] else f"DOWN ({result['error_message'] or 'Failed'})"
     
     # Redirect back to referring page or monitor detail
@@ -455,7 +455,7 @@ async def settings_pushover_post(request: Request):
 @app.post("/settings/pushover/test")
 async def settings_pushover_test_post(request: Request):
     check_access(request, require_write=True)
-    success, msg = send_test_alert()
+    success, msg = await send_test_alert()
     msg_type = "success" if success else "danger"
     return RedirectResponse(url=f"/settings?msg=Pushover+test:+{msg}&type={msg_type}", status_code=status.HTTP_303_SEE_OTHER)
 

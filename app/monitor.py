@@ -3,6 +3,7 @@ import re
 import time
 import logging
 import httpx
+from datetime import datetime, timezone, timedelta
 from typing import Optional, Dict, Any
 from app.database import get_db, get_setting
 from app.alerts import send_pushover_notification
@@ -10,7 +11,48 @@ from app.screenshots import capture_screenshot
 
 logger = logging.getLogger("site_monitor.checker")
 
-async def check_monitor(monitor: Dict[str, Any]) -> Dict[str, Any]:
+# Limit concurrent checks in the worker loop to prevent resource exhaustion
+_check_semaphore = asyncio.Semaphore(5)
+
+
+def _should_take_screenshot(monitor: Dict[str, Any], is_up: bool, is_manual: bool, is_currently_down: int) -> bool:
+    """
+    Determines if a screenshot should be captured for this check to avoid redundant browser launches.
+    Captures when:
+    - Triggered manually ("Check Now")
+    - Check failed (site is down)
+    - State changed (recovered from down)
+    - No success screenshot exists yet
+    - Existing success screenshot is older than 6 hours
+    """
+    if is_manual:
+        return True
+    
+    if not is_up:
+        # Always capture on failure
+        return True
+
+    # If recovering from DOWN
+    if is_currently_down == 1:
+        return True
+
+    # If no success screenshot exists yet
+    last_success = monitor.get("last_success_screenshot_time")
+    if not last_success:
+        return True
+
+    # If older than 6 hours, refresh screenshot
+    try:
+        dt = datetime.strptime(last_success, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+        if datetime.now(timezone.utc) - dt > timedelta(hours=6):
+            return True
+    except Exception:
+        return True
+
+    return False
+
+
+async def check_monitor(monitor: Dict[str, Any], is_manual: bool = False) -> Dict[str, Any]:
     """
     Performs an HTTP GET check for a single monitor and records the result.
     """
@@ -71,6 +113,22 @@ async def check_monitor(monitor: Dict[str, Any]) -> Dict[str, Any]:
 
     now_ts = int(time.time())
 
+    # Get current alert state to know if state is transitioning
+    is_currently_down = 0
+    consecutive_failures = 0
+    last_alert_time = 0
+    alert_count = 0
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM alert_state WHERE monitor_id = ?", (monitor_id,))
+        alert_state = cursor.fetchone()
+        if alert_state:
+            is_currently_down = alert_state["is_currently_down"]
+            consecutive_failures = alert_state["consecutive_failures"]
+            last_alert_time = alert_state["last_alert_time"]
+            alert_count = alert_state["alert_count"]
+
     # Determine whether to capture screenshot
     if monitor.get("capture_screenshots") is not None:
         should_capture_screenshots = bool(monitor["capture_screenshots"])
@@ -79,13 +137,16 @@ async def check_monitor(monitor: Dict[str, Any]) -> Dict[str, Any]:
         should_capture_screenshots = global_screenshots.lower() in ("true", "1", "yes")
 
     screenshot_ts = None
-    if should_capture_screenshots:
-        screenshot_ts = await capture_screenshot(
-            monitor_id=monitor_id,
-            url=url,
-            is_success=is_up,
-            error_message=error_message or ""
-        )
+    if should_capture_screenshots and _should_take_screenshot(monitor, is_up, is_manual, is_currently_down):
+        try:
+            screenshot_ts = await capture_screenshot(
+                monitor_id=monitor_id,
+                url=url,
+                is_success=is_up,
+                error_message=error_message or ""
+            )
+        except Exception as scr_err:
+            logger.error(f"Failed to capture screenshot for monitor {monitor_id}: {scr_err}")
 
     # Process check result in DB
     with get_db() as conn:
@@ -161,7 +222,7 @@ async def check_monitor(monitor: Dict[str, Any]) -> Dict[str, Any]:
         if is_up:
             if is_currently_down == 1:
                 # Recovery!
-                send_pushover_notification(
+                await send_pushover_notification(
                     title=f"RECOVERED: {name}",
                     message=f"Host '{name}' ({url}) has recovered and is back UP.",
                     priority=0
@@ -187,7 +248,7 @@ async def check_monitor(monitor: Dict[str, Any]) -> Dict[str, Any]:
                     new_is_down = 1
                     new_last_alert_time = now_ts
                     new_alert_count = 1
-                    send_pushover_notification(
+                    await send_pushover_notification(
                         title=f"DOWN: {name}",
                         message=f"Host '{name}' ({url}) is DOWN!\nError: {error_message or 'Unknown error'}\nConsecutive failures: {consecutive_failures}",
                         priority=1
@@ -200,7 +261,7 @@ async def check_monitor(monitor: Dict[str, Any]) -> Dict[str, Any]:
                         if elapsed_seconds >= repeat_interval_mins * 60:
                             new_last_alert_time = now_ts
                             new_alert_count += 1
-                            send_pushover_notification(
+                            await send_pushover_notification(
                                 title=f"STILL DOWN: {name}",
                                 message=f"Host '{name}' ({url}) is STILL DOWN!\nError: {error_message or 'Unknown error'}\nConsecutive failures: {consecutive_failures}\nAlert #{new_alert_count}",
                                 priority=1
@@ -223,9 +284,24 @@ async def check_monitor(monitor: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+async def _safe_check_monitor(monitor: Dict[str, Any]):
+    """
+    Executes check_monitor under semaphore and strict per-task timeout.
+    """
+    timeout = float(monitor.get("timeout", 10)) + 25.0
+    async with _check_semaphore:
+        try:
+            await asyncio.wait_for(check_monitor(monitor), timeout=timeout)
+        except asyncio.TimeoutError:
+            logger.error(f"Check for monitor '{monitor.get('name')}' (id: {monitor.get('id')}) exceeded timeout of {timeout}s")
+        except Exception as e:
+            logger.error(f"Unhandled error checking monitor '{monitor.get('name')}': {e}")
+
+
 async def monitoring_worker_loop():
     """
     Background worker loop that checks active monitors based on their check intervals.
+    Guaranteed never to block indefinitely.
     """
     last_checked: Dict[int, float] = {}
 
@@ -246,12 +322,17 @@ async def monitoring_worker_loop():
 
                 if now - last >= interval:
                     last_checked[m_id] = now
-                    tasks.append(check_monitor(monitor))
+                    tasks.append(_safe_check_monitor(monitor))
 
             if tasks:
-                await asyncio.gather(*tasks, return_exceptions=True)
+                try:
+                    # Guard entire batch with 45s timeout so loop ALWAYS continues
+                    await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), timeout=45.0)
+                except asyncio.TimeoutError:
+                    logger.warning("Batch monitor check reached 45s timeout; proceeding to next cycle.")
 
         except Exception as e:
             logger.error(f"Error in monitoring loop: {e}")
 
         await asyncio.sleep(5)  # Check every 5 seconds for due monitors
+

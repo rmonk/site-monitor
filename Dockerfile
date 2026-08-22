@@ -29,6 +29,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libpangocairo-1.0-0 \
     libasound2t64 \
     fonts-liberation \
+    tini \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python packages & Playwright Chromium browser
@@ -42,6 +43,9 @@ COPY app/ ./app/
 # Expose container port & setup volume for SQLite persistence
 EXPOSE 8000
 VOLUME ["/data"]
+
+# Use tini as init process to reap zombie processes
+ENTRYPOINT ["/usr/bin/tini", "--"]
 
 # Run application with Uvicorn
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
