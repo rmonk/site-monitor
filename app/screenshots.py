@@ -51,33 +51,41 @@ def generate_fallback_screenshot(target_path: Path, url: str, error_msg: str):
         logger.error(f"Failed to generate fallback screenshot image: {fallback_err}")
 
 
-async def _capture_with_playwright(filepath: Path, url: str, monitor_id: int, is_success: bool):
-    from playwright.async_api import async_playwright
+async def _capture_with_playwright(filepath: Path, url: str, monitor_id: int, is_success: bool, error_message: str):
+    from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeoutError
     async with async_playwright() as p:
         browser = await p.chromium.launch(
             headless=True,
+            timeout=10000,
             args=[
                 "--no-sandbox",
                 "--disable-dev-shm-usage",
-                "--disable-gpu",
-                "--disable-setuid-sandbox",
-                "--no-first-run",
-                "--no-zygote",
-                "--disable-extensions",
-                "--disable-background-networking"
+                "--disable-gpu"
             ]
         )
         try:
             page = await browser.new_page(viewport={"width": 1280, "height": 720})
             try:
-                # 10s timeout for rendering
-                await page.goto(url, timeout=10000, wait_until="domcontentloaded")
-                await page.screenshot(path=str(filepath))
-                logger.info(f"Captured Playwright screenshot for monitor {monitor_id} ({'success' if is_success else 'failed'})")
+                try:
+                    await page.goto(url, timeout=10000, wait_until="domcontentloaded")
+                    await page.screenshot(path=str(filepath), timeout=5000)
+                    logger.info(f"Captured Playwright screenshot for monitor {monitor_id} ({'success' if is_success else 'failed'})")
+                except PlaywrightTimeoutError as te:
+                    logger.warning(f"Playwright navigation timed out (10s) for {url}. Generating fallback screenshot.")
+                    generate_fallback_screenshot(filepath, url, error_message or "Navigation timed out (10s)")
+                except Exception as nav_err:
+                    logger.warning(f"Playwright navigation error for {url}: {nav_err}. Generating fallback screenshot.")
+                    generate_fallback_screenshot(filepath, url, error_message or str(nav_err))
             finally:
-                await page.close()
+                try:
+                    await page.close()
+                except Exception:
+                    pass
         finally:
-            await browser.close()
+            try:
+                await browser.close()
+            except Exception:
+                pass
 
 
 async def capture_screenshot(monitor_id: int, url: str, is_success: bool, error_message: str = "") -> str:
@@ -94,17 +102,18 @@ async def capture_screenshot(monitor_id: int, url: str, is_success: bool, error_
 
     async with _screenshot_semaphore:
         try:
-            # Overall 15-second timeout for the entire Playwright launch, navigation & capture
+            # 25-second overall timeout guard
             await asyncio.wait_for(
-                _capture_with_playwright(filepath, url, monitor_id, is_success),
-                timeout=15.0
+                _capture_with_playwright(filepath, url, monitor_id, is_success, error_message),
+                timeout=25.0
             )
         except asyncio.TimeoutError:
-            logger.warning(f"Screenshot capture timed out after 15s for monitor {monitor_id} ({url}). Using fallback image.")
-            generate_fallback_screenshot(filepath, url, error_message or "Screenshot capture timed out (15s)")
+            logger.warning(f"Screenshot capture timed out after 25s for monitor {monitor_id} ({url}). Using fallback image.")
+            generate_fallback_screenshot(filepath, url, error_message or "Screenshot capture timed out (25s)")
         except Exception as e:
             logger.warning(f"Failed to capture Playwright screenshot for monitor {monitor_id}: {e}. Using fallback image.")
             generate_fallback_screenshot(filepath, url, error_message or str(e))
 
     return timestamp_str
+
 
