@@ -84,8 +84,17 @@
   - [x] Implement `GET /healthz` endpoint with database and heartbeat freshness evaluation
   - [x] Add `HEALTHCHECK` directive in `Dockerfile` testing `/healthz` via `curl`
   - [x] Add Dead Man's Switch settings (`heartbeat_ping_url`, `heartbeat_ping_interval_minutes`) and Settings UI card
-  - [x] Add automated unit tests in `test_app.py` for `/healthz` and heartbeat settings
   - [x] Commit to `devel`, merge to `main`, and push to remote `origin`
+
+- [x] **12. Pushover Receipt Tracking, Auto-Cancellation & Test Suite**
+  - [x] Add receipt extraction and `cancel_pushover_receipt` in `app/alerts.py`
+  - [x] Add `active_receipts` column in `alert_state` table with schema migration in `app/database.py`
+  - [x] Store emergency receipt tokens when hosts go DOWN and auto-cancel all active receipts when host RECOVERS in `app/monitor.py`
+  - [x] Add priority configuration (Priority 2 Emergency / Priority 1 / Priority 0) with retry and expire settings
+  - [x] Add 3-action test suite in Settings UI (Normal Test, Alert Test, Recovery & Cancel Test) and endpoints in `app/main.py`
+  - [x] Add automated unit tests in `test_app.py` for receipt cancellation and test endpoints
+  - [x] Commit to `devel`, merge to `main`, and push to remote `origin`
+
 
 
 

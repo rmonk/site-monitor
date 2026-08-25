@@ -6,7 +6,7 @@ import httpx
 from datetime import datetime, timezone, timedelta
 from typing import Optional, Dict, Any
 from app.database import get_db, get_setting
-from app.alerts import send_pushover_notification
+from app.alerts import send_pushover_notification, cancel_pushover_receipt
 from app.screenshots import capture_screenshot
 
 logger = logging.getLogger("site_monitor.checker")
@@ -192,7 +192,7 @@ async def check_monitor(monitor: Dict[str, Any], is_manual: bool = False) -> Dic
 
         if not alert_state:
             cursor.execute(
-                "INSERT INTO alert_state (monitor_id, consecutive_failures, is_currently_down, last_alert_time, alert_count) VALUES (?, 0, 0, 0, 0)",
+                "INSERT INTO alert_state (monitor_id, consecutive_failures, is_currently_down, last_alert_time, alert_count, active_receipts) VALUES (?, 0, 0, 0, 0, '')",
                 (monitor_id,)
             )
             cursor.execute("SELECT * FROM alert_state WHERE monitor_id = ?", (monitor_id,))
@@ -202,6 +202,7 @@ async def check_monitor(monitor: Dict[str, Any], is_manual: bool = False) -> Dic
         is_currently_down = alert_state["is_currently_down"]
         last_alert_time = alert_state["last_alert_time"]
         alert_count = alert_state["alert_count"]
+        active_receipts = alert_state["active_receipts"] if "active_receipts" in alert_state.keys() and alert_state["active_receipts"] else ""
 
         # Determine repeat alert configuration
         if monitor.get("repeat_alerts") is not None:
@@ -218,6 +219,21 @@ async def check_monitor(monitor: Dict[str, Any], is_manual: bool = False) -> Dic
             except ValueError:
                 repeat_interval_mins = 60
 
+        try:
+            down_priority = int(get_setting("pushover_priority_down", "2"))
+        except ValueError:
+            down_priority = 2
+
+        try:
+            emergency_retry = int(get_setting("pushover_emergency_retry", "60"))
+        except ValueError:
+            emergency_retry = 60
+
+        try:
+            emergency_expire = int(get_setting("pushover_emergency_expire", "3600"))
+        except ValueError:
+            emergency_expire = 3600
+
         # Handle state transitions and alerting
         if is_up:
             if is_currently_down == 1:
@@ -228,11 +244,18 @@ async def check_monitor(monitor: Dict[str, Any], is_manual: bool = False) -> Dic
                     priority=0
                 )
                 logger.info(f"Monitor '{name}' recovered.")
+
+                # Cancel all active emergency alert receipts for this monitor
+                if active_receipts:
+                    receipt_ids = [r.strip() for r in active_receipts.split(",") if r.strip()]
+                    for r_id in receipt_ids:
+                        cancel_ok, cancel_msg = await cancel_pushover_receipt(r_id)
+                        logger.info(f"Recovery receipt cancellation for {name} ({r_id}): {cancel_msg}")
             
             # Reset state
             cursor.execute("""
                 UPDATE alert_state
-                SET consecutive_failures = 0, is_currently_down = 0, alert_count = 0
+                SET consecutive_failures = 0, is_currently_down = 0, alert_count = 0, active_receipts = ''
                 WHERE monitor_id = ?
             """, (monitor_id,))
 
@@ -241,6 +264,7 @@ async def check_monitor(monitor: Dict[str, Any], is_manual: bool = False) -> Dic
             new_is_down = is_currently_down
             new_last_alert_time = last_alert_time
             new_alert_count = alert_count
+            new_receipts = [r.strip() for r in active_receipts.split(",") if r.strip()]
 
             if consecutive_failures >= failure_threshold:
                 if is_currently_down == 0:
@@ -248,11 +272,15 @@ async def check_monitor(monitor: Dict[str, Any], is_manual: bool = False) -> Dic
                     new_is_down = 1
                     new_last_alert_time = now_ts
                     new_alert_count = 1
-                    await send_pushover_notification(
+                    ok, msg, receipt = await send_pushover_notification(
                         title=f"DOWN: {name}",
                         message=f"Host '{name}' ({url}) is DOWN!\nError: {error_message or 'Unknown error'}\nConsecutive failures: {consecutive_failures}",
-                        priority=1
+                        priority=down_priority,
+                        retry=emergency_retry,
+                        expire=emergency_expire
                     )
+                    if ok and receipt:
+                        new_receipts.append(receipt)
                     logger.warning(f"Monitor '{name}' is DOWN. Initial alert sent.")
                 else:
                     # Already DOWN -> Check repeat alert
@@ -261,18 +289,23 @@ async def check_monitor(monitor: Dict[str, Any], is_manual: bool = False) -> Dic
                         if elapsed_seconds >= repeat_interval_mins * 60:
                             new_last_alert_time = now_ts
                             new_alert_count += 1
-                            await send_pushover_notification(
+                            ok, msg, receipt = await send_pushover_notification(
                                 title=f"STILL DOWN: {name}",
                                 message=f"Host '{name}' ({url}) is STILL DOWN!\nError: {error_message or 'Unknown error'}\nConsecutive failures: {consecutive_failures}\nAlert #{new_alert_count}",
-                                priority=1
+                                priority=down_priority,
+                                retry=emergency_retry,
+                                expire=emergency_expire
                             )
+                            if ok and receipt:
+                                new_receipts.append(receipt)
                             logger.warning(f"Monitor '{name}' still DOWN. Repeat alert #{new_alert_count} sent.")
 
+            updated_active_receipts = ",".join(new_receipts)
             cursor.execute("""
                 UPDATE alert_state
-                SET consecutive_failures = ?, is_currently_down = ?, last_alert_time = ?, alert_count = ?
+                SET consecutive_failures = ?, is_currently_down = ?, last_alert_time = ?, alert_count = ?, active_receipts = ?
                 WHERE monitor_id = ?
-            """, (consecutive_failures, new_is_down, new_last_alert_time, new_alert_count, monitor_id))
+            """, (consecutive_failures, new_is_down, new_last_alert_time, new_alert_count, updated_active_receipts, monitor_id))
 
     return {
         "monitor_id": monitor_id,

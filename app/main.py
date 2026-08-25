@@ -18,7 +18,10 @@ from app.auth import (
     hash_password, verify_password, create_session, remove_session,
     get_current_user, is_authenticated, check_access
 )
-from app.alerts import send_test_alert
+from app.alerts import (
+    send_test_alert, send_normal_test_alert,
+    send_down_test_alert, send_recovery_test_alert
+)
 from app.monitor import check_monitor, monitoring_worker_loop, watchdog_worker_loop, get_worker_heartbeat
 from app.screenshots import get_screenshots_dir
 from fastapi.responses import FileResponse
@@ -516,20 +519,47 @@ async def settings_pushover_post(request: Request):
     enabled = "true" if form_data.get("pushover_enabled") == "true" else "false"
     token = str(form_data.get("pushover_api_token", "")).strip()
     user_key = str(form_data.get("pushover_user_key", "")).strip()
+    priority_down = str(form_data.get("pushover_priority_down", "2")).strip()
+    retry_secs = str(form_data.get("pushover_emergency_retry", "60")).strip()
+    expire_secs = str(form_data.get("pushover_emergency_expire", "3600")).strip()
 
     set_setting("pushover_enabled", enabled)
     set_setting("pushover_api_token", token)
     set_setting("pushover_user_key", user_key)
+    set_setting("pushover_priority_down", priority_down)
+    set_setting("pushover_emergency_retry", retry_secs)
+    set_setting("pushover_emergency_expire", expire_secs)
 
     return RedirectResponse(url="/settings?msg=Pushover+configuration+saved&type=success", status_code=status.HTTP_303_SEE_OTHER)
 
 
+@app.post("/settings/pushover/test/normal")
+async def settings_pushover_test_normal_post(request: Request):
+    check_access(request, require_write=True)
+    success, msg = await send_normal_test_alert()
+    msg_type = "success" if success else "danger"
+    return RedirectResponse(url=f"/settings?msg=Pushover+normal+test:+{msg}&type={msg_type}", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@app.post("/settings/pushover/test/alert")
+async def settings_pushover_test_alert_post(request: Request):
+    check_access(request, require_write=True)
+    success, msg, receipt = await send_down_test_alert()
+    msg_type = "success" if success else "danger"
+    return RedirectResponse(url=f"/settings?msg=Pushover+alert+test:+{msg}&type={msg_type}", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@app.post("/settings/pushover/test/recovery")
+async def settings_pushover_test_recovery_post(request: Request):
+    check_access(request, require_write=True)
+    success, msg, cancelled_receipt = await send_recovery_test_alert()
+    msg_type = "success" if success else "danger"
+    return RedirectResponse(url=f"/settings?msg=Pushover+recovery+test:+{msg}&type={msg_type}", status_code=status.HTTP_303_SEE_OTHER)
+
+
 @app.post("/settings/pushover/test")
 async def settings_pushover_test_post(request: Request):
-    check_access(request, require_write=True)
-    success, msg = await send_test_alert()
-    msg_type = "success" if success else "danger"
-    return RedirectResponse(url=f"/settings?msg=Pushover+test:+{msg}&type={msg_type}", status_code=status.HTTP_303_SEE_OTHER)
+    return await settings_pushover_test_normal_post(request)
 
 
 @app.post("/settings/password")

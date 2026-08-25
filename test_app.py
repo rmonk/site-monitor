@@ -255,3 +255,44 @@ def test_heartbeat_settings():
     assert get_setting("heartbeat_ping_url") == "https://hc-ping.com/12345-test"
     assert get_setting("heartbeat_ping_interval_minutes") == "30"
 
+def test_pushover_test_suite_routes():
+    login_res = client.post("/login", data={"username": "testadmin", "password": "testsecret123"}, follow_redirects=False)
+    session_token = login_res.cookies["session_token"]
+
+    # 1. Update Pushover settings with priority 2
+    res_save = client.post("/settings/pushover", data={
+        "pushover_enabled": "true",
+        "pushover_api_token": "token123",
+        "pushover_user_key": "user456",
+        "pushover_priority_down": "2",
+        "pushover_emergency_retry": "90",
+        "pushover_emergency_expire": "1800"
+    }, cookies={"session_token": session_token}, follow_redirects=False)
+    assert res_save.status_code == 303
+    assert get_setting("pushover_priority_down") == "2"
+    assert get_setting("pushover_emergency_retry") == "90"
+    assert get_setting("pushover_emergency_expire") == "1800"
+
+    # 2. Test normal test route
+    res_normal = client.post("/settings/pushover/test/normal", cookies={"session_token": session_token}, follow_redirects=False)
+    assert res_normal.status_code == 303
+    assert "Pushover+normal+test" in res_normal.headers["location"]
+
+    # 3. Test alert test route
+    res_alert = client.post("/settings/pushover/test/alert", cookies={"session_token": session_token}, follow_redirects=False)
+    assert res_alert.status_code == 303
+    assert "Pushover+alert+test" in res_alert.headers["location"]
+
+    # 4. Test recovery test route
+    res_rec = client.post("/settings/pushover/test/recovery", cookies={"session_token": session_token}, follow_redirects=False)
+    assert res_rec.status_code == 303
+    assert "Pushover+recovery+test" in res_rec.headers["location"]
+
+    # Reset
+    client.post("/settings/pushover", data={
+        "pushover_enabled": "false",
+        "pushover_api_token": "",
+        "pushover_user_key": ""
+    }, cookies={"session_token": session_token})
+
+

@@ -101,9 +101,16 @@ def init_db():
                 is_currently_down INTEGER NOT NULL DEFAULT 0,
                 last_alert_time INTEGER DEFAULT 0,
                 alert_count INTEGER NOT NULL DEFAULT 0,
+                active_receipts TEXT DEFAULT '',
                 FOREIGN KEY (monitor_id) REFERENCES monitors(id) ON DELETE CASCADE
             );
         """)
+
+        # Migration check for alert_state columns
+        cursor.execute("PRAGMA table_info(alert_state);")
+        as_columns = [row["name"] for row in cursor.fetchall()]
+        if "active_receipts" not in as_columns:
+            cursor.execute("ALTER TABLE alert_state ADD COLUMN active_receipts TEXT DEFAULT '';")
 
         # Default settings if not present
         default_settings = {
@@ -111,6 +118,10 @@ def init_db():
             "pushover_enabled": "false",
             "pushover_api_token": "",
             "pushover_user_key": "",
+            "pushover_priority_down": "2",
+            "pushover_emergency_retry": "60",
+            "pushover_emergency_expire": "3600",
+            "last_test_receipt": "",
             "default_repeat_alerts": "true",
             "default_repeat_interval_minutes": "60",
             "default_capture_screenshots": "true",
