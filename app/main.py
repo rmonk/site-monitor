@@ -12,20 +12,37 @@ from fastapi.templating import Jinja2Templates
 
 from app.config import BASE_DIR, HOST, PORT
 from app.database import (
-    init_db, get_db, get_setting, set_setting, get_all_settings
+    init_db,
+    get_db,
+    get_setting,
+    set_setting,
+    get_all_settings,
+    get_setting_bool,
+    get_setting_int,
+    format_utc_timestamp,
 )
 from app.auth import (
-    hash_password, verify_password, create_session, remove_session,
-    get_current_user, is_authenticated, check_access
+    hash_password,
+    verify_password,
+    create_session,
+    remove_session,
+    get_current_user,
+    is_authenticated,
+    check_access,
 )
-from datetime import datetime, timezone
 from app.alerts import (
-    send_test_alert, send_normal_test_alert,
-    send_down_test_alert, send_recovery_test_alert
+    send_test_alert,
+    send_normal_test_alert,
+    send_down_test_alert,
+    send_recovery_test_alert,
+    close_alert_client,
 )
 from app.monitor import (
-    check_monitor, monitoring_worker_loop, watchdog_worker_loop,
-    get_worker_heartbeat, sync_monitor_receipt_status
+    check_monitor,
+    monitoring_worker_loop,
+    watchdog_worker_loop,
+    get_worker_heartbeat,
+    sync_monitor_receipt_status,
 )
 from app.screenshots import get_screenshots_dir
 from fastapi.responses import FileResponse
@@ -37,13 +54,16 @@ async def lifespan(app: FastAPI):
     init_db()
     task_holder: Dict[str, Any] = {}
     task_holder["worker_task"] = asyncio.create_task(monitoring_worker_loop())
-    task_holder["watchdog_task"] = asyncio.create_task(watchdog_worker_loop(task_holder))
+    task_holder["watchdog_task"] = asyncio.create_task(
+        watchdog_worker_loop(task_holder)
+    )
     yield
     # Shutdown logic
     if task_holder.get("worker_task"):
         task_holder["worker_task"].cancel()
     if task_holder.get("watchdog_task"):
         task_holder["watchdog_task"].cancel()
+    await close_alert_client()
 
 
 app = FastAPI(title="Site Monitor", docs_url=None, redoc_url=None, lifespan=lifespan)
@@ -57,7 +77,7 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
 def hex_to_rgb(hex_str: str) -> str:
-    hex_str = hex_str.lstrip('#')
+    hex_str = hex_str.lstrip("#")
     if len(hex_str) == 6:
         try:
             r = int(hex_str[0:2], 16)
@@ -69,10 +89,12 @@ def hex_to_rgb(hex_str: str) -> str:
     return "13, 110, 253"
 
 
-def get_template_context(request: Request, active_page: str = "", msg: str = "", msg_type: str = "info") -> dict:
+def get_template_context(
+    request: Request, active_page: str = "", msg: str = "", msg_type: str = "info"
+) -> dict:
     user = get_current_user(request)
     auth_mode = get_setting("auth_mode", "readonly_public")
-    
+
     # Theme settings
     theme_mode = get_setting("theme_mode", "light")
     theme_color_preset = get_setting("theme_color_preset", "default")
@@ -99,10 +121,12 @@ def get_template_context(request: Request, active_page: str = "", msg: str = "",
         "theme_custom_primary_rgb": hex_to_rgb(theme_custom_primary),
         "theme_custom_bg": theme_custom_bg,
         "theme_custom_card": theme_custom_card,
-        "theme_custom_text": theme_custom_text
+        "theme_custom_text": theme_custom_text,
     }
 
+
 # --- Routes ---
+
 
 @app.get("/healthz")
 async def healthz():
@@ -122,7 +146,7 @@ async def healthz():
     except Exception as e:
         return JSONResponse(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            content={"status": "unhealthy", "database": False, "error": str(e)}
+            content={"status": "unhealthy", "database": False, "error": str(e)},
         )
 
     heartbeat = get_worker_heartbeat()
@@ -141,8 +165,8 @@ async def healthz():
                 "database": True,
                 "worker_alive": False,
                 "heartbeat_age_seconds": heartbeat_age,
-                "active_monitors": active_monitors_count
-            }
+                "active_monitors": active_monitors_count,
+            },
         )
 
     return JSONResponse(
@@ -152,8 +176,8 @@ async def healthz():
             "database": True,
             "worker_alive": True,
             "heartbeat_age_seconds": heartbeat_age,
-            "active_monitors": active_monitors_count
-        }
+            "active_monitors": active_monitors_count,
+        },
     )
 
 
@@ -163,77 +187,98 @@ async def dashboard(request: Request):
     user = get_current_user(request)
 
     if auth_mode == "require_login" and not user:
-        return RedirectResponse(url="/login?msg=Please+login+to+access+dashboard&type=warning", status_code=status.HTTP_303_SEE_OTHER)
+        return RedirectResponse(
+            url="/login?msg=Please+login+to+access+dashboard&type=warning",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
 
     with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute("SELECT * FROM monitors ORDER BY name ASC")
-        monitors_raw = cursor.fetchall()
+        monitors_raw = [dict(m) for m in cursor.fetchall()]
 
-        monitors = []
-        up_count = 0
-        down_count = 0
+        # Bulk fetch all alert states
+        cursor.execute("SELECT * FROM alert_state")
+        alert_states = {row["monitor_id"]: dict(row) for row in cursor.fetchall()}
 
-        for m in monitors_raw:
-            m_dict = dict(m)
-            # Fetch latest check result and alert state
-            cursor.execute("""
-                SELECT is_up, response_time_ms, timestamp
+        # Bulk fetch latest check history for each monitor in a single query
+        cursor.execute("""
+            SELECT ch.monitor_id, ch.is_up, ch.response_time_ms, ch.timestamp
+            FROM check_history ch
+            INNER JOIN (
+                SELECT monitor_id, MAX(id) AS max_id
                 FROM check_history
-                WHERE monitor_id = ?
-                ORDER BY id DESC LIMIT 1
-            """, (m_dict["id"],))
-            latest_check = cursor.fetchone()
+                GROUP BY monitor_id
+            ) latest ON ch.id = latest.max_id
+        """)
+        latest_checks = {row["monitor_id"]: dict(row) for row in cursor.fetchall()}
 
-            cursor.execute("SELECT * FROM alert_state WHERE monitor_id = ?", (m_dict["id"],))
-            a_state = cursor.fetchone()
+    monitors = []
+    up_count = 0
+    down_count = 0
 
-            if a_state and a_state["is_currently_down"] == 1:
-                m_dict["last_is_up"] = 0
+    for m_dict in monitors_raw:
+        m_id = m_dict["id"]
+        latest_check = latest_checks.get(m_id)
+        a_state = alert_states.get(m_id)
+
+        if a_state and a_state["is_currently_down"] == 1:
+            m_dict["last_is_up"] = 0
+            down_count += 1
+        elif latest_check:
+            m_dict["last_is_up"] = latest_check["is_up"]
+            if latest_check["is_up"] == 1:
+                up_count += 1
+            else:
                 down_count += 1
-            elif latest_check:
-                m_dict["last_is_up"] = latest_check["is_up"]
-                if latest_check["is_up"] == 1:
-                    up_count += 1
-                else:
-                    down_count += 1
-            else:
-                m_dict["last_is_up"] = None
+        else:
+            m_dict["last_is_up"] = None
 
-            m_dict["last_response_time_ms"] = latest_check["response_time_ms"] if latest_check else None
-            m_dict["last_check_time"] = latest_check["timestamp"] if latest_check else None
+        m_dict["last_response_time_ms"] = (
+            latest_check["response_time_ms"] if latest_check else None
+        )
+        m_dict["last_check_time"] = latest_check["timestamp"] if latest_check else None
 
-            # Pushover Receipt & Acknowledgment details
-            m_dict["is_currently_down"] = a_state["is_currently_down"] if a_state else 0
-            m_dict["active_receipts"] = a_state["active_receipts"] if a_state and a_state["active_receipts"] else ""
-            m_dict["receipt_acknowledged"] = a_state["receipt_acknowledged"] if a_state else 0
-            m_dict["receipt_acknowledged_by"] = a_state["receipt_acknowledged_by"] if a_state else ""
-            m_dict["receipt_acknowledged_device"] = a_state["receipt_acknowledged_device"] if a_state else ""
-            
-            ack_at_ts = a_state["receipt_acknowledged_at"] if a_state else 0
-            if ack_at_ts and ack_at_ts > 0:
-                m_dict["receipt_acknowledged_at_formatted"] = datetime.fromtimestamp(ack_at_ts, timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-            else:
-                m_dict["receipt_acknowledged_at_formatted"] = ""
+        # Pushover Receipt & Acknowledgment details
+        m_dict["is_currently_down"] = a_state["is_currently_down"] if a_state else 0
+        m_dict["active_receipts"] = (
+            a_state["active_receipts"]
+            if a_state and a_state.get("active_receipts")
+            else ""
+        )
+        m_dict["receipt_acknowledged"] = (
+            a_state["receipt_acknowledged"] if a_state else 0
+        )
+        m_dict["receipt_acknowledged_by"] = (
+            a_state["receipt_acknowledged_by"] if a_state else ""
+        )
+        m_dict["receipt_acknowledged_device"] = (
+            a_state["receipt_acknowledged_device"] if a_state else ""
+        )
+        m_dict["receipt_acknowledged_at_formatted"] = format_utc_timestamp(
+            a_state.get("receipt_acknowledged_at") if a_state else 0
+        )
 
-            monitors.append(m_dict)
+        monitors.append(m_dict)
 
     total_count = len(monitors)
     uptime_pct = round((up_count / total_count * 100), 1) if total_count > 0 else 100.0
 
-    default_repeat = get_setting("default_repeat_alerts", "true").lower() in ("true", "1", "yes")
+    default_repeat = get_setting_bool("default_repeat_alerts", True)
     default_repeat_interval = get_setting("default_repeat_interval_minutes", "60")
 
     ctx = get_template_context(request, active_page="dashboard")
-    ctx.update({
-        "monitors": monitors,
-        "total_count": total_count,
-        "up_count": up_count,
-        "down_count": down_count,
-        "uptime_pct": uptime_pct,
-        "default_repeat_alerts": default_repeat,
-        "default_repeat_interval": default_repeat_interval
-    })
+    ctx.update(
+        {
+            "monitors": monitors,
+            "total_count": total_count,
+            "up_count": up_count,
+            "down_count": down_count,
+            "uptime_pct": uptime_pct,
+            "default_repeat_alerts": default_repeat,
+            "default_repeat_interval": default_repeat_interval,
+        }
+    )
     return templates.TemplateResponse(request, "dashboard.html", ctx)
 
 
@@ -242,12 +287,13 @@ async def serve_screenshot(filename: str):
     """Serves captured monitor screenshot PNG images."""
     if ".." in filename or "/" in filename or "\\" in filename:
         raise HTTPException(status_code=400, detail="Invalid filename")
-    
+
     filepath = get_screenshots_dir() / filename
     if not filepath.exists():
         raise HTTPException(status_code=404, detail="Screenshot not found")
-    
+
     return FileResponse(filepath, media_type="image/png")
+
 
 @app.get("/login", response_class=HTMLResponse)
 async def login_page(request: Request):
@@ -270,11 +316,21 @@ async def login_post(request: Request):
 
     if user_row and verify_password(password, user_row["password_hash"]):
         session_token = create_session(username)
-        response = RedirectResponse(url="/?msg=Successfully+logged+in&type=success", status_code=status.HTTP_303_SEE_OTHER)
-        response.set_cookie(key="session_token", value=session_token, httponly=True, max_age=86400*30)
+        response = RedirectResponse(
+            url="/?msg=Successfully+logged+in&type=success",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+        response.set_cookie(
+            key="session_token", value=session_token, httponly=True, max_age=86400 * 30
+        )
         return response
 
-    ctx = get_template_context(request, active_page="login", msg="Invalid username or password", msg_type="danger")
+    ctx = get_template_context(
+        request,
+        active_page="login",
+        msg="Invalid username or password",
+        msg_type="danger",
+    )
     return templates.TemplateResponse(request, "login.html", ctx)
 
 
@@ -283,7 +339,10 @@ async def logout(request: Request):
     token = request.cookies.get("session_token")
     if token:
         remove_session(token)
-    response = RedirectResponse(url="/login?msg=Logged+out+successfully&type=info", status_code=status.HTTP_303_SEE_OTHER)
+    response = RedirectResponse(
+        url="/login?msg=Logged+out+successfully&type=info",
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
     response.delete_cookie(key="session_token")
     return response
 
@@ -315,18 +374,37 @@ async def monitor_new_post(request: Request):
     repeat_interval_minutes = int(rep_int_val) if rep_int_val else None
 
     capture_val = form_data.get("capture_screenshots")
-    capture_screenshots = 1 if capture_val == "1" else (0 if capture_val == "0" else None)
+    capture_screenshots = (
+        1 if capture_val == "1" else (0 if capture_val == "0" else None)
+    )
 
     is_active = 1 if form_data.get("is_active") == "1" else 0
 
     with get_db() as conn:
         cursor = conn.cursor()
-        cursor.execute("""
+        cursor.execute(
+            """
             INSERT INTO monitors (name, url, check_interval, timeout, regex_pattern, failure_threshold, repeat_alerts, repeat_interval_minutes, capture_screenshots, is_active)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (name, url, check_interval, timeout, regex_pattern, failure_threshold, repeat_alerts, repeat_interval_minutes, capture_screenshots, is_active))
+        """,
+            (
+                name,
+                url,
+                check_interval,
+                timeout,
+                regex_pattern,
+                failure_threshold,
+                repeat_alerts,
+                repeat_interval_minutes,
+                capture_screenshots,
+                is_active,
+            ),
+        )
 
-    return RedirectResponse(url="/?msg=Monitor+created+successfully&type=success", status_code=status.HTTP_303_SEE_OTHER)
+    return RedirectResponse(
+        url="/?msg=Monitor+created+successfully&type=success",
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
 
 
 @app.get("/monitors/{monitor_id}", response_class=HTMLResponse)
@@ -335,7 +413,10 @@ async def monitor_detail(request: Request, monitor_id: int):
     user = get_current_user(request)
 
     if auth_mode == "require_login" and not user:
-        return RedirectResponse(url="/login?msg=Please+login+first&type=warning", status_code=status.HTTP_303_SEE_OTHER)
+        return RedirectResponse(
+            url="/login?msg=Please+login+first&type=warning",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
 
     with get_db() as conn:
         cursor = conn.cursor()
@@ -347,32 +428,35 @@ async def monitor_detail(request: Request, monitor_id: int):
         cursor.execute("SELECT * FROM alert_state WHERE monitor_id = ?", (monitor_id,))
         a_state = cursor.fetchone()
 
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT * FROM check_history WHERE monitor_id = ? ORDER BY id DESC LIMIT 50
-        """, (monitor_id,))
+        """,
+            (monitor_id,),
+        )
         history = [dict(r) for r in cursor.fetchall()]
 
-    default_repeat = get_setting("default_repeat_alerts", "true").lower() in ("true", "1", "yes")
+    default_repeat = get_setting_bool("default_repeat_alerts", True)
     default_repeat_interval = get_setting("default_repeat_interval_minutes", "60")
-    default_capture_screenshots = get_setting("default_capture_screenshots", "true").lower() in ("true", "1", "yes")
+    default_capture_screenshots = get_setting_bool("default_capture_screenshots", True)
 
     a_dict = dict(a_state) if a_state else None
     if a_dict:
-        ack_at = a_dict.get("receipt_acknowledged_at", 0)
-        if ack_at and ack_at > 0:
-            a_dict["receipt_acknowledged_at_formatted"] = datetime.fromtimestamp(ack_at, timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-        else:
-            a_dict["receipt_acknowledged_at_formatted"] = ""
+        a_dict["receipt_acknowledged_at_formatted"] = format_utc_timestamp(
+            a_dict.get("receipt_acknowledged_at", 0)
+        )
 
     ctx = get_template_context(request)
-    ctx.update({
-        "monitor": dict(m_row),
-        "alert_state": a_dict,
-        "history": history,
-        "default_repeat_alerts": default_repeat,
-        "default_repeat_interval": default_repeat_interval,
-        "default_capture_screenshots": default_capture_screenshots
-    })
+    ctx.update(
+        {
+            "monitor": dict(m_row),
+            "alert_state": a_dict,
+            "history": history,
+            "default_repeat_alerts": default_repeat,
+            "default_repeat_interval": default_repeat_interval,
+            "default_capture_screenshots": default_capture_screenshots,
+        }
+    )
     return templates.TemplateResponse(request, "monitor_detail.html", ctx)
 
 
@@ -410,21 +494,41 @@ async def monitor_edit_post(request: Request, monitor_id: int):
     repeat_interval_minutes = int(rep_int_val) if rep_int_val else None
 
     capture_val = form_data.get("capture_screenshots")
-    capture_screenshots = 1 if capture_val == "1" else (0 if capture_val == "0" else None)
+    capture_screenshots = (
+        1 if capture_val == "1" else (0 if capture_val == "0" else None)
+    )
 
     is_active = 1 if form_data.get("is_active") == "1" else 0
 
     with get_db() as conn:
         cursor = conn.cursor()
-        cursor.execute("""
+        cursor.execute(
+            """
             UPDATE monitors
             SET name = ?, url = ?, check_interval = ?, timeout = ?, regex_pattern = ?,
                 failure_threshold = ?, repeat_alerts = ?, repeat_interval_minutes = ?, capture_screenshots = ?, is_active = ?,
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
-        """, (name, url, check_interval, timeout, regex_pattern, failure_threshold, repeat_alerts, repeat_interval_minutes, capture_screenshots, is_active, monitor_id))
+        """,
+            (
+                name,
+                url,
+                check_interval,
+                timeout,
+                regex_pattern,
+                failure_threshold,
+                repeat_alerts,
+                repeat_interval_minutes,
+                capture_screenshots,
+                is_active,
+                monitor_id,
+            ),
+        )
 
-    return RedirectResponse(url=f"/monitors/{monitor_id}?msg=Monitor+updated+successfully&type=success", status_code=status.HTTP_303_SEE_OTHER)
+    return RedirectResponse(
+        url=f"/monitors/{monitor_id}?msg=Monitor+updated+successfully&type=success",
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
 
 
 @app.post("/monitors/{monitor_id}/delete")
@@ -434,7 +538,9 @@ async def monitor_delete(request: Request, monitor_id: int):
         cursor = conn.cursor()
         cursor.execute("DELETE FROM monitors WHERE id = ?", (monitor_id,))
 
-    return RedirectResponse(url="/?msg=Monitor+deleted&type=info", status_code=status.HTTP_303_SEE_OTHER)
+    return RedirectResponse(
+        url="/?msg=Monitor+deleted&type=info", status_code=status.HTTP_303_SEE_OTHER
+    )
 
 
 @app.post("/monitors/{monitor_id}/check")
@@ -448,12 +554,17 @@ async def monitor_check_now(request: Request, monitor_id: int):
             raise HTTPException(status_code=404, detail="Monitor not found")
 
     result = await check_monitor(dict(m_row), is_manual=True)
-    status_msg = "UP" if result["is_up"] else f"DOWN ({result['error_message'] or 'Failed'})"
-    
+    status_msg = (
+        "UP" if result["is_up"] else f"DOWN ({result['error_message'] or 'Failed'})"
+    )
+
     # Redirect back to referring page or monitor detail
     referer = request.headers.get("referer", f"/monitors/{monitor_id}")
     msg_type = "success" if result["is_up"] else "danger"
-    return RedirectResponse(url=f"{referer}?msg=Check+completed:+{status_msg}&type={msg_type}", status_code=status.HTTP_303_SEE_OTHER)
+    return RedirectResponse(
+        url=f"{referer}?msg=Check+completed:+{status_msg}&type={msg_type}",
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
 
 
 @app.post("/monitors/{monitor_id}/sync-receipt")
@@ -476,7 +587,10 @@ async def monitor_sync_receipt_post(request: Request, monitor_id: int):
         msg = "No+active+receipt+found+or+Pushover+query+failed"
         msg_type = "info"
 
-    return RedirectResponse(url=f"{clean_referer}?msg={msg}&type={msg_type}", status_code=status.HTTP_303_SEE_OTHER)
+    return RedirectResponse(
+        url=f"{clean_referer}?msg={msg}&type={msg_type}",
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
 
 
 @app.get("/api/monitors/{monitor_id}/receipt")
@@ -491,7 +605,13 @@ async def monitor_receipt_api(request: Request, monitor_id: int):
         raise HTTPException(status_code=404, detail="Alert state not found")
 
     ack_at_ts = a_state["receipt_acknowledged_at"]
-    formatted_ts = datetime.fromtimestamp(ack_at_ts, timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC") if (ack_at_ts and ack_at_ts > 0) else ""
+    formatted_ts = (
+        datetime.fromtimestamp(ack_at_ts, timezone.utc).strftime(
+            "%Y-%m-%d %H:%M:%S UTC"
+        )
+        if (ack_at_ts and ack_at_ts > 0)
+        else ""
+    )
 
     return {
         "monitor_id": monitor_id,
@@ -503,7 +623,7 @@ async def monitor_receipt_api(request: Request, monitor_id: int):
         "receipt_acknowledged_by": a_state["receipt_acknowledged_by"],
         "receipt_acknowledged_device": a_state["receipt_acknowledged_device"],
         "receipt_last_checked": a_state["receipt_last_checked"],
-        "live_status": status_res
+        "live_status": status_res,
     }
 
 
@@ -523,7 +643,10 @@ async def settings_auth_post(request: Request):
     auth_mode = str(form_data.get("auth_mode", "readonly_public"))
     if auth_mode in ("readonly_public", "require_login"):
         set_setting("auth_mode", auth_mode)
-    return RedirectResponse(url="/settings?msg=Authentication+access+mode+updated&type=success", status_code=status.HTTP_303_SEE_OTHER)
+    return RedirectResponse(
+        url="/settings?msg=Authentication+access+mode+updated&type=success",
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
 
 
 @app.post("/settings/theme")
@@ -539,7 +662,15 @@ async def settings_theme_post(request: Request):
 
     if theme_mode in ("light", "dark", "system"):
         set_setting("theme_mode", theme_mode)
-    if theme_color_preset in ("default", "emerald", "purple", "amber", "crimson", "slate", "custom"):
+    if theme_color_preset in (
+        "default",
+        "emerald",
+        "purple",
+        "amber",
+        "crimson",
+        "slate",
+        "custom",
+    ):
         set_setting("theme_color_preset", theme_color_preset)
 
     if theme_custom_primary.startswith("#") and len(theme_custom_primary) in (4, 7):
@@ -564,15 +695,24 @@ async def settings_theme_post(request: Request):
 async def settings_alerts_default_post(request: Request):
     check_access(request, require_write=True)
     form_data = await request.form()
-    default_repeat = "true" if form_data.get("default_repeat_alerts") == "true" else "false"
-    repeat_interval = str(form_data.get("default_repeat_interval_minutes", "60")).strip()
-    default_screenshots = "true" if form_data.get("default_capture_screenshots") == "true" else "false"
+    default_repeat = (
+        "true" if form_data.get("default_repeat_alerts") == "true" else "false"
+    )
+    repeat_interval = str(
+        form_data.get("default_repeat_interval_minutes", "60")
+    ).strip()
+    default_screenshots = (
+        "true" if form_data.get("default_capture_screenshots") == "true" else "false"
+    )
 
     set_setting("default_repeat_alerts", default_repeat)
     set_setting("default_repeat_interval_minutes", repeat_interval)
     set_setting("default_capture_screenshots", default_screenshots)
 
-    return RedirectResponse(url="/settings?msg=Global+monitoring+defaults+updated&type=success", status_code=status.HTTP_303_SEE_OTHER)
+    return RedirectResponse(
+        url="/settings?msg=Global+monitoring+defaults+updated&type=success",
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
 
 
 @app.post("/settings/heartbeat")
@@ -585,7 +725,10 @@ async def settings_heartbeat_post(request: Request):
     set_setting("heartbeat_ping_url", ping_url)
     set_setting("heartbeat_ping_interval_minutes", ping_interval)
 
-    return RedirectResponse(url="/settings?msg=Heartbeat+configuration+saved&type=success", status_code=status.HTTP_303_SEE_OTHER)
+    return RedirectResponse(
+        url="/settings?msg=Heartbeat+configuration+saved&type=success",
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
 
 
 @app.post("/settings/pushover")
@@ -606,7 +749,10 @@ async def settings_pushover_post(request: Request):
     set_setting("pushover_emergency_retry", retry_secs)
     set_setting("pushover_emergency_expire", expire_secs)
 
-    return RedirectResponse(url="/settings?msg=Pushover+configuration+saved&type=success", status_code=status.HTTP_303_SEE_OTHER)
+    return RedirectResponse(
+        url="/settings?msg=Pushover+configuration+saved&type=success",
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
 
 
 @app.post("/settings/pushover/test/normal")
@@ -614,7 +760,10 @@ async def settings_pushover_test_normal_post(request: Request):
     check_access(request, require_write=True)
     success, msg = await send_normal_test_alert()
     msg_type = "success" if success else "danger"
-    return RedirectResponse(url=f"/settings?msg=Pushover+normal+test:+{msg}&type={msg_type}", status_code=status.HTTP_303_SEE_OTHER)
+    return RedirectResponse(
+        url=f"/settings?msg=Pushover+normal+test:+{msg}&type={msg_type}",
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
 
 
 @app.post("/settings/pushover/test/alert")
@@ -622,7 +771,10 @@ async def settings_pushover_test_alert_post(request: Request):
     check_access(request, require_write=True)
     success, msg, receipt = await send_down_test_alert()
     msg_type = "success" if success else "danger"
-    return RedirectResponse(url=f"/settings?msg=Pushover+alert+test:+{msg}&type={msg_type}", status_code=status.HTTP_303_SEE_OTHER)
+    return RedirectResponse(
+        url=f"/settings?msg=Pushover+alert+test:+{msg}&type={msg_type}",
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
 
 
 @app.post("/settings/pushover/test/recovery")
@@ -630,7 +782,10 @@ async def settings_pushover_test_recovery_post(request: Request):
     check_access(request, require_write=True)
     success, msg, cancelled_receipt = await send_recovery_test_alert()
     msg_type = "success" if success else "danger"
-    return RedirectResponse(url=f"/settings?msg=Pushover+recovery+test:+{msg}&type={msg_type}", status_code=status.HTTP_303_SEE_OTHER)
+    return RedirectResponse(
+        url=f"/settings?msg=Pushover+recovery+test:+{msg}&type={msg_type}",
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
 
 
 @app.post("/settings/pushover/test")
@@ -647,7 +802,10 @@ async def settings_password_post(request: Request):
     confirm_password = str(form_data.get("confirm_password", ""))
 
     if new_password != confirm_password:
-        return RedirectResponse(url="/settings?msg=New+passwords+do+not+match&type=danger", status_code=status.HTTP_303_SEE_OTHER)
+        return RedirectResponse(
+            url="/settings?msg=New+passwords+do+not+match&type=danger",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
 
     with get_db() as conn:
         cursor = conn.cursor()
@@ -655,12 +813,21 @@ async def settings_password_post(request: Request):
         user_row = cursor.fetchone()
 
         if not user_row or not verify_password(old_password, user_row["password_hash"]):
-            return RedirectResponse(url="/settings?msg=Incorrect+current+password&type=danger", status_code=status.HTTP_303_SEE_OTHER)
+            return RedirectResponse(
+                url="/settings?msg=Incorrect+current+password&type=danger",
+                status_code=status.HTTP_303_SEE_OTHER,
+            )
 
         new_hash = hash_password(new_password)
-        cursor.execute("UPDATE users SET password_hash = ? WHERE username = ?", (new_hash, username))
+        cursor.execute(
+            "UPDATE users SET password_hash = ? WHERE username = ?",
+            (new_hash, username),
+        )
 
-    return RedirectResponse(url="/settings?msg=Password+updated+successfully&type=success", status_code=status.HTTP_303_SEE_OTHER)
+    return RedirectResponse(
+        url="/settings?msg=Password+updated+successfully&type=success",
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
 
 
 @app.get("/api/status")
@@ -675,39 +842,50 @@ async def api_status(request: Request):
     with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute("SELECT * FROM monitors")
-        monitors_raw = cursor.fetchall()
+        monitors_raw = [dict(m) for m in cursor.fetchall()]
 
-        monitors_status = []
-        for m in monitors_raw:
-            m_id = m["id"]
-            cursor.execute("""
-                SELECT is_up, status_code, response_time_ms, timestamp, error_message
+        cursor.execute("SELECT * FROM alert_state")
+        alert_states = {row["monitor_id"]: dict(row) for row in cursor.fetchall()}
+
+        cursor.execute("""
+            SELECT ch.monitor_id, ch.is_up, ch.status_code, ch.response_time_ms, ch.timestamp, ch.error_message
+            FROM check_history ch
+            INNER JOIN (
+                SELECT monitor_id, MAX(id) AS max_id
                 FROM check_history
-                WHERE monitor_id = ?
-                ORDER BY id DESC LIMIT 1
-            """, (m_id,))
-            last_check = cursor.fetchone()
+                GROUP BY monitor_id
+            ) latest ON ch.id = latest.max_id
+        """)
+        latest_checks = {row["monitor_id"]: dict(row) for row in cursor.fetchall()}
 
-            cursor.execute("SELECT is_currently_down, consecutive_failures FROM alert_state WHERE monitor_id = ?", (m_id,))
-            a_state = cursor.fetchone()
+    monitors_status = []
+    for m in monitors_raw:
+        m_id = m["id"]
+        last_check = latest_checks.get(m_id)
+        a_state = alert_states.get(m_id)
 
-            monitors_status.append({
+        monitors_status.append(
+            {
                 "id": m_id,
                 "name": m["name"],
                 "url": m["url"],
                 "is_active": bool(m["is_active"]),
                 "is_down": bool(a_state["is_currently_down"]) if a_state else False,
-                "consecutive_failures": a_state["consecutive_failures"] if a_state else 0,
-                "last_check": dict(last_check) if last_check else None
-            })
+                "consecutive_failures": (
+                    a_state["consecutive_failures"] if a_state else 0
+                ),
+                "last_check": last_check,
+            }
+        )
 
     return {
         "status": "ok",
         "timestamp": datetime.now(timezone.utc).isoformat(),
-        "monitors": monitors_status
+        "monitors": monitors_status,
     }
 
 
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run("app.main:app", host=HOST, port=PORT, reload=True)

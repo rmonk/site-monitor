@@ -105,6 +105,16 @@
   - [x] Add automated unit and integration tests in `scratch/test_fixes.py` and `test_app.py`
   - [x] Commit to `devel`, merge to `main`, and push to remote `origin`
 
+- [x] **14. Performance Optimization, DRY Simplification & Codebase Formatting**
+  - [x] Eliminate N+1 query loops on `GET /` (dashboard) and `GET /api/status` using bulk dictionary fetches
+  - [x] Add typed setting helpers (`get_setting_int`, `get_setting_bool`), timestamp formatters, and receipt list parsers in `app/database.py`
+  - [x] Maintain shared pooled `httpx.AsyncClient` with connection limits in `app/alerts.py` and close during app lifespan teardown
+  - [x] Consolidate multi-stage database transactions in `check_monitor` into a single atomic write transaction outside network call paths
+  - [x] Format entire Python codebase using `black`
+  - [x] Add comprehensive unit and integration tests covering optimizations
+  - [x] Commit to `devel`, merge to `main`, and push to remote `origin`
+
+
 
 
 

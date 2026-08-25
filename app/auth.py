@@ -9,36 +9,35 @@ from app.database import get_db, get_setting
 # In-memory session store: session_token -> username
 SESSION_STORE = {}
 
+
 def hash_password(password: str) -> str:
     salt = secrets.token_hex(16)
     key = hashlib.pbkdf2_hmac(
-        'sha256',
-        password.encode('utf-8'),
-        salt.encode('utf-8'),
-        100_000
+        "sha256", password.encode("utf-8"), salt.encode("utf-8"), 100_000
     )
     return f"{salt}${key.hex()}"
 
+
 def verify_password(password: str, stored_hash: str) -> bool:
     try:
-        salt, key_hex = stored_hash.split('$')
+        salt, key_hex = stored_hash.split("$")
         key = hashlib.pbkdf2_hmac(
-            'sha256',
-            password.encode('utf-8'),
-            salt.encode('utf-8'),
-            100_000
+            "sha256", password.encode("utf-8"), salt.encode("utf-8"), 100_000
         )
         return hmac.compare_digest(key.hex(), key_hex)
     except Exception:
         return False
+
 
 def create_session(username: str) -> str:
     token = secrets.token_urlsafe(32)
     SESSION_STORE[token] = username
     return token
 
+
 def remove_session(token: str):
     SESSION_STORE.pop(token, None)
+
 
 def get_current_user(request: Request) -> Optional[str]:
     token = request.cookies.get("session_token")
@@ -46,8 +45,10 @@ def get_current_user(request: Request) -> Optional[str]:
         return None
     return SESSION_STORE.get(token)
 
+
 def is_authenticated(request: Request) -> bool:
     return get_current_user(request) is not None
+
 
 def check_access(request: Request, require_write: bool = False) -> Optional[str]:
     """
@@ -65,7 +66,7 @@ def check_access(request: Request, require_write: bool = False) -> Optional[str]
         if not user:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Authentication required for write access"
+                detail="Authentication required for write access",
             )
         return user
 
@@ -73,7 +74,7 @@ def check_access(request: Request, require_write: bool = False) -> Optional[str]
         if not user:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Authentication required"
+                detail="Authentication required",
             )
         return user
 

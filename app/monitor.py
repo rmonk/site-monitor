@@ -5,8 +5,18 @@ import logging
 import httpx
 from datetime import datetime, timezone, timedelta
 from typing import Optional, Dict, Any
-from app.database import get_db, get_setting
-from app.alerts import send_pushover_notification, cancel_pushover_receipt, get_pushover_receipt_status
+from app.database import (
+    get_db,
+    get_setting,
+    get_setting_bool,
+    get_setting_int,
+    parse_receipt_list,
+)
+from app.alerts import (
+    send_pushover_notification,
+    cancel_pushover_receipt,
+    get_pushover_receipt_status,
+)
 from app.screenshots import capture_screenshot
 
 logger = logging.getLogger("site_monitor.checker")
@@ -15,7 +25,9 @@ logger = logging.getLogger("site_monitor.checker")
 _check_semaphore = asyncio.Semaphore(5)
 
 
-def _should_take_screenshot(monitor: Dict[str, Any], is_up: bool, is_manual: bool, is_currently_down: int) -> bool:
+def _should_take_screenshot(
+    monitor: Dict[str, Any], is_up: bool, is_manual: bool, is_currently_down: int
+) -> bool:
     """
     Determines if a screenshot should be captured for this check to avoid redundant browser launches.
     Captures when:
@@ -27,7 +39,7 @@ def _should_take_screenshot(monitor: Dict[str, Any], is_up: bool, is_manual: boo
     """
     if is_manual:
         return True
-    
+
     if not is_up:
         # Always capture on failure
         return True
@@ -43,7 +55,9 @@ def _should_take_screenshot(monitor: Dict[str, Any], is_up: bool, is_manual: boo
 
     # If older than 6 hours, refresh screenshot
     try:
-        dt = datetime.strptime(last_success, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+        dt = datetime.strptime(last_success, "%Y-%m-%d %H:%M:%S").replace(
+            tzinfo=timezone.utc
+        )
         if datetime.now(timezone.utc) - dt > timedelta(hours=6):
             return True
     except Exception:
@@ -52,7 +66,9 @@ def _should_take_screenshot(monitor: Dict[str, Any], is_up: bool, is_manual: boo
     return False
 
 
-async def check_monitor(monitor: Dict[str, Any], is_manual: bool = False) -> Dict[str, Any]:
+async def check_monitor(
+    monitor: Dict[str, Any], is_manual: bool = False
+) -> Dict[str, Any]:
     """
     Performs an HTTP GET check for a single monitor and records the result.
     """
@@ -71,7 +87,9 @@ async def check_monitor(monitor: Dict[str, Any], is_manual: bool = False) -> Dic
     error_message: Optional[str] = None
 
     try:
-        async with httpx.AsyncClient(timeout=float(timeout), follow_redirects=True) as client:
+        async with httpx.AsyncClient(
+            timeout=float(timeout), follow_redirects=True
+        ) as client:
             response = await client.get(url)
             response_time_ms = round((time.time() - start_time) * 1000, 2)
             status_code = response.status_code
@@ -96,7 +114,9 @@ async def check_monitor(monitor: Dict[str, Any], is_manual: bool = False) -> Dic
                 except Exception as re_err:
                     regex_matched = False
                     is_up = False
-                    error_message = f"Invalid regex pattern or evaluation error: {re_err}"
+                    error_message = (
+                        f"Invalid regex pattern or evaluation error: {re_err}"
+                    )
 
     except httpx.TimeoutException:
         response_time_ms = round((time.time() - start_time) * 1000, 2)
@@ -113,201 +133,206 @@ async def check_monitor(monitor: Dict[str, Any], is_manual: bool = False) -> Dic
 
     now_ts = int(time.time())
 
-    # Get current alert state to know if state is transitioning
-    is_currently_down = 0
-    consecutive_failures = 0
-    last_alert_time = 0
-    alert_count = 0
-
+    # 1. Fetch current alert state
     with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute("SELECT * FROM alert_state WHERE monitor_id = ?", (monitor_id,))
-        alert_state = cursor.fetchone()
-        if alert_state:
-            is_currently_down = alert_state["is_currently_down"]
-            consecutive_failures = alert_state["consecutive_failures"]
-            last_alert_time = alert_state["last_alert_time"]
-            alert_count = alert_state["alert_count"]
+        alert_state_row = cursor.fetchone()
 
-    # Determine whether to capture screenshot
+    consecutive_failures = (
+        alert_state_row["consecutive_failures"] if alert_state_row else 0
+    )
+    is_currently_down = alert_state_row["is_currently_down"] if alert_state_row else 0
+    last_alert_time = alert_state_row["last_alert_time"] if alert_state_row else 0
+    alert_count = alert_state_row["alert_count"] if alert_state_row else 0
+    active_receipts = (
+        alert_state_row["active_receipts"]
+        if (alert_state_row and alert_state_row["active_receipts"])
+        else ""
+    )
+
+    # 2. Determine whether to capture screenshot
     if monitor.get("capture_screenshots") is not None:
         should_capture_screenshots = bool(monitor["capture_screenshots"])
     else:
-        global_screenshots = get_setting("default_capture_screenshots", "true")
-        should_capture_screenshots = global_screenshots.lower() in ("true", "1", "yes")
+        should_capture_screenshots = get_setting_bool(
+            "default_capture_screenshots", True
+        )
 
     screenshot_ts = None
-    if should_capture_screenshots and _should_take_screenshot(monitor, is_up, is_manual, is_currently_down):
+    if should_capture_screenshots and _should_take_screenshot(
+        monitor, is_up, is_manual, is_currently_down
+    ):
         try:
             screenshot_ts = await capture_screenshot(
                 monitor_id=monitor_id,
                 url=url,
                 is_success=is_up,
-                error_message=error_message or ""
+                error_message=error_message or "",
             )
         except Exception as scr_err:
-            logger.error(f"Failed to capture screenshot for monitor {monitor_id}: {scr_err}")
+            logger.error(
+                f"Failed to capture screenshot for monitor {monitor_id}: {scr_err}"
+            )
 
-    # Process check result in DB
+    # 3. Determine repeat alert & Pushover configuration
+    if monitor.get("repeat_alerts") is not None:
+        should_repeat = bool(monitor["repeat_alerts"])
+    else:
+        should_repeat = get_setting_bool("default_repeat_alerts", True)
+
+    if (
+        monitor.get("repeat_interval_minutes") is not None
+        and monitor["repeat_interval_minutes"] > 0
+    ):
+        repeat_interval_mins = int(monitor["repeat_interval_minutes"])
+    else:
+        repeat_interval_mins = get_setting_int("default_repeat_interval_minutes", 60)
+
+    down_priority = get_setting_int("pushover_priority_down", 2)
+    emergency_retry = get_setting_int("pushover_emergency_retry", 60)
+    emergency_expire = get_setting_int("pushover_emergency_expire", 3600)
+
+    # 4. Handle state transitions and alerting (Network calls OUTSIDE DB transaction)
+    new_receipts = parse_receipt_list(active_receipts)
+    new_is_down = is_currently_down
+    new_last_alert_time = last_alert_time
+    new_alert_count = alert_count
+    new_consecutive_failures = consecutive_failures
+
+    if is_up:
+        if is_currently_down == 1:
+            # Recovery notice!
+            await send_pushover_notification(
+                title=f"RECOVERED: {name}",
+                message=f"Host '{name}' ({url}) has recovered and is back UP.",
+                priority=0,
+            )
+            logger.info(f"Monitor '{name}' recovered.")
+
+            # Cancel all active emergency alert receipts for this monitor
+            for r_id in new_receipts:
+                cancel_ok, cancel_msg = await cancel_pushover_receipt(r_id)
+                logger.info(
+                    f"Recovery receipt cancellation for {name} ({r_id}): {cancel_msg}"
+                )
+
+        new_consecutive_failures = 0
+        new_is_down = 0
+        new_alert_count = 0
+        new_receipts = []
+    else:
+        new_consecutive_failures += 1
+        if new_consecutive_failures >= failure_threshold:
+            if is_currently_down == 0:
+                # Transition to DOWN -> Send initial alert
+                new_is_down = 1
+                new_last_alert_time = now_ts
+                new_alert_count = 1
+                ok, msg, receipt = await send_pushover_notification(
+                    title=f"DOWN: {name}",
+                    message=f"Host '{name}' ({url}) is DOWN!\nError: {error_message or 'Unknown error'}\nConsecutive failures: {new_consecutive_failures}",
+                    priority=down_priority,
+                    retry=emergency_retry,
+                    expire=emergency_expire,
+                )
+                if ok and receipt and receipt not in new_receipts:
+                    new_receipts.append(receipt)
+                logger.warning(f"Monitor '{name}' is DOWN. Initial alert sent.")
+            else:
+                # Already DOWN -> Check repeat alert
+                if should_repeat:
+                    elapsed_seconds = now_ts - last_alert_time
+                    if elapsed_seconds >= repeat_interval_mins * 60:
+                        new_last_alert_time = now_ts
+                        new_alert_count += 1
+                        ok, msg, receipt = await send_pushover_notification(
+                            title=f"STILL DOWN: {name}",
+                            message=f"Host '{name}' ({url}) is STILL DOWN!\nError: {error_message or 'Unknown error'}\nConsecutive failures: {new_consecutive_failures}\nAlert #{new_alert_count}",
+                            priority=down_priority,
+                            retry=emergency_retry,
+                            expire=emergency_expire,
+                        )
+                        if ok and receipt and receipt not in new_receipts:
+                            new_receipts.append(receipt)
+                        logger.warning(
+                            f"Monitor '{name}' still DOWN. Repeat alert #{new_alert_count} sent."
+                        )
+
+    updated_active_receipts = ",".join(new_receipts)
+
+    # 5. Consolidated single atomic DB write transaction
     with get_db() as conn:
         cursor = conn.cursor()
 
-        # Update screenshot timestamp in monitors table if captured
+        # Update screenshot timestamp if captured
         if screenshot_ts:
-            if is_up:
-                cursor.execute(
-                    "UPDATE monitors SET last_success_screenshot_time = ? WHERE id = ?",
-                    (screenshot_ts, monitor_id)
-                )
-            else:
-                cursor.execute(
-                    "UPDATE monitors SET last_failed_screenshot_time = ? WHERE id = ?",
-                    (screenshot_ts, monitor_id)
-                )
+            col = (
+                "last_success_screenshot_time"
+                if is_up
+                else "last_failed_screenshot_time"
+            )
+            cursor.execute(
+                f"UPDATE monitors SET {col} = ? WHERE id = ?",
+                (screenshot_ts, monitor_id),
+            )
 
-        # 1. Record check history
-        cursor.execute("""
+        # Record check history
+        cursor.execute(
+            """
             INSERT INTO check_history (monitor_id, status_code, response_time_ms, is_up, regex_matched, error_message)
             VALUES (?, ?, ?, ?, ?, ?)
-        """, (
-            monitor_id,
-            status_code,
-            response_time_ms,
-            1 if is_up else 0,
-            1 if regex_matched is True else (0 if regex_matched is False else None),
-            error_message
-        ))
+        """,
+            (
+                monitor_id,
+                status_code,
+                response_time_ms,
+                1 if is_up else 0,
+                1 if regex_matched is True else (0 if regex_matched is False else None),
+                error_message,
+            ),
+        )
 
         # Prune history to keep max 1000 entries per monitor
-        cursor.execute("""
+        cursor.execute(
+            """
             DELETE FROM check_history
             WHERE monitor_id = ? AND id NOT IN (
                 SELECT id FROM check_history WHERE monitor_id = ? ORDER BY id DESC LIMIT 1000
             )
-        """, (monitor_id, monitor_id))
+        """,
+            (monitor_id, monitor_id),
+        )
 
-        # 2. Get or create alert state
-        cursor.execute("SELECT * FROM alert_state WHERE monitor_id = ?", (monitor_id,))
-        alert_state = cursor.fetchone()
-
-        if not alert_state:
-            cursor.execute(
-                "INSERT INTO alert_state (monitor_id, consecutive_failures, is_currently_down, last_alert_time, alert_count, active_receipts) VALUES (?, 0, 0, 0, 0, '')",
-                (monitor_id,)
-            )
-            cursor.execute("SELECT * FROM alert_state WHERE monitor_id = ?", (monitor_id,))
-            alert_state = cursor.fetchone()
-
-        consecutive_failures = alert_state["consecutive_failures"]
-        is_currently_down = alert_state["is_currently_down"]
-        last_alert_time = alert_state["last_alert_time"]
-        alert_count = alert_state["alert_count"]
-        active_receipts = alert_state["active_receipts"] if "active_receipts" in alert_state.keys() and alert_state["active_receipts"] else ""
-
-        # Determine repeat alert configuration
-        if monitor.get("repeat_alerts") is not None:
-            should_repeat = bool(monitor["repeat_alerts"])
-        else:
-            global_repeat = get_setting("default_repeat_alerts", "true")
-            should_repeat = global_repeat.lower() in ("true", "1", "yes")
-
-        if monitor.get("repeat_interval_minutes") is not None and monitor["repeat_interval_minutes"] > 0:
-            repeat_interval_mins = int(monitor["repeat_interval_minutes"])
-        else:
-            try:
-                repeat_interval_mins = int(get_setting("default_repeat_interval_minutes", "60"))
-            except ValueError:
-                repeat_interval_mins = 60
-
-        try:
-            down_priority = int(get_setting("pushover_priority_down", "2"))
-        except ValueError:
-            down_priority = 2
-
-        try:
-            emergency_retry = int(get_setting("pushover_emergency_retry", "60"))
-        except ValueError:
-            emergency_retry = 60
-
-        try:
-            emergency_expire = int(get_setting("pushover_emergency_expire", "3600"))
-        except ValueError:
-            emergency_expire = 3600
-
-        # Handle state transitions and alerting
-        if is_up:
-            if is_currently_down == 1:
-                # Recovery!
-                await send_pushover_notification(
-                    title=f"RECOVERED: {name}",
-                    message=f"Host '{name}' ({url}) has recovered and is back UP.",
-                    priority=0
-                )
-                logger.info(f"Monitor '{name}' recovered.")
-
-                # Cancel all active emergency alert receipts for this monitor
-                if active_receipts:
-                    receipt_ids = [r.strip() for r in active_receipts.split(",") if r.strip()]
-                    for r_id in receipt_ids:
-                        cancel_ok, cancel_msg = await cancel_pushover_receipt(r_id)
-                        logger.info(f"Recovery receipt cancellation for {name} ({r_id}): {cancel_msg}")
-            
-            # Reset state
-            cursor.execute("""
-                UPDATE alert_state
-                SET consecutive_failures = 0, is_currently_down = 0, alert_count = 0, active_receipts = '',
-                    receipt_acknowledged = 0, receipt_acknowledged_at = 0, receipt_acknowledged_by = '',
-                    receipt_acknowledged_device = '', receipt_last_checked = 0
-                WHERE monitor_id = ?
-            """, (monitor_id,))
-
-        else:
-            consecutive_failures += 1
-            new_is_down = is_currently_down
-            new_last_alert_time = last_alert_time
-            new_alert_count = alert_count
-            new_receipts = [r.strip() for r in active_receipts.split(",") if r.strip()]
-
-            if consecutive_failures >= failure_threshold:
-                if is_currently_down == 0:
-                    # Transition to DOWN -> Send initial alert
-                    new_is_down = 1
-                    new_last_alert_time = now_ts
-                    new_alert_count = 1
-                    ok, msg, receipt = await send_pushover_notification(
-                        title=f"DOWN: {name}",
-                        message=f"Host '{name}' ({url}) is DOWN!\nError: {error_message or 'Unknown error'}\nConsecutive failures: {consecutive_failures}",
-                        priority=down_priority,
-                        retry=emergency_retry,
-                        expire=emergency_expire
-                    )
-                    if ok and receipt:
-                        new_receipts.append(receipt)
-                    logger.warning(f"Monitor '{name}' is DOWN. Initial alert sent.")
-                else:
-                    # Already DOWN -> Check repeat alert
-                    if should_repeat:
-                        elapsed_seconds = now_ts - last_alert_time
-                        if elapsed_seconds >= repeat_interval_mins * 60:
-                            new_last_alert_time = now_ts
-                            new_alert_count += 1
-                            ok, msg, receipt = await send_pushover_notification(
-                                title=f"STILL DOWN: {name}",
-                                message=f"Host '{name}' ({url}) is STILL DOWN!\nError: {error_message or 'Unknown error'}\nConsecutive failures: {consecutive_failures}\nAlert #{new_alert_count}",
-                                priority=down_priority,
-                                retry=emergency_retry,
-                                expire=emergency_expire
-                            )
-                            if ok and receipt:
-                                new_receipts.append(receipt)
-                            logger.warning(f"Monitor '{name}' still DOWN. Repeat alert #{new_alert_count} sent.")
-
-            updated_active_receipts = ",".join(new_receipts)
-            cursor.execute("""
-                UPDATE alert_state
-                SET consecutive_failures = ?, is_currently_down = ?, last_alert_time = ?, alert_count = ?, active_receipts = ?
-                WHERE monitor_id = ?
-            """, (consecutive_failures, new_is_down, new_last_alert_time, new_alert_count, updated_active_receipts, monitor_id))
+        # Update or Insert alert state
+        cursor.execute(
+            """
+            INSERT INTO alert_state (
+                monitor_id, consecutive_failures, is_currently_down, last_alert_time,
+                alert_count, active_receipts, receipt_acknowledged, receipt_acknowledged_at,
+                receipt_acknowledged_by, receipt_acknowledged_device, receipt_last_checked
+            ) VALUES (?, ?, ?, ?, ?, ?, 0, 0, '', '', 0)
+            ON CONFLICT(monitor_id) DO UPDATE SET
+                consecutive_failures = excluded.consecutive_failures,
+                is_currently_down = excluded.is_currently_down,
+                last_alert_time = excluded.last_alert_time,
+                alert_count = excluded.alert_count,
+                active_receipts = excluded.active_receipts,
+                receipt_acknowledged = CASE WHEN excluded.is_currently_down = 0 THEN 0 ELSE alert_state.receipt_acknowledged END,
+                receipt_acknowledged_at = CASE WHEN excluded.is_currently_down = 0 THEN 0 ELSE alert_state.receipt_acknowledged_at END,
+                receipt_acknowledged_by = CASE WHEN excluded.is_currently_down = 0 THEN '' ELSE alert_state.receipt_acknowledged_by END,
+                receipt_acknowledged_device = CASE WHEN excluded.is_currently_down = 0 THEN '' ELSE alert_state.receipt_acknowledged_device END,
+                receipt_last_checked = CASE WHEN excluded.is_currently_down = 0 THEN 0 ELSE alert_state.receipt_last_checked END
+        """,
+            (
+                monitor_id,
+                new_consecutive_failures,
+                new_is_down,
+                new_last_alert_time,
+                new_alert_count,
+                updated_active_receipts,
+            ),
+        )
 
     return {
         "monitor_id": monitor_id,
@@ -315,7 +340,7 @@ async def check_monitor(monitor: Dict[str, Any], is_manual: bool = False) -> Dic
         "is_up": is_up,
         "status_code": status_code,
         "response_time_ms": response_time_ms,
-        "error_message": error_message
+        "error_message": error_message,
     }
 
 
@@ -328,16 +353,22 @@ async def _safe_check_monitor(monitor: Dict[str, Any]):
         try:
             await asyncio.wait_for(check_monitor(monitor), timeout=timeout)
         except asyncio.TimeoutError:
-            logger.error(f"Check for monitor '{monitor.get('name')}' (id: {monitor.get('id')}) exceeded timeout of {timeout}s")
+            logger.error(
+                f"Check for monitor '{monitor.get('name')}' (id: {monitor.get('id')}) exceeded timeout of {timeout}s"
+            )
         except Exception as e:
-            logger.error(f"Unhandled error checking monitor '{monitor.get('name')}': {e}")
+            logger.error(
+                f"Unhandled error checking monitor '{monitor.get('name')}': {e}"
+            )
 
 
 _worker_heartbeat: float = time.time()
 
+
 def get_worker_heartbeat() -> float:
     global _worker_heartbeat
     return _worker_heartbeat
+
 
 def update_worker_heartbeat():
     global _worker_heartbeat
@@ -374,9 +405,13 @@ async def monitoring_worker_loop():
             if tasks:
                 try:
                     # Guard entire batch with 45s timeout so loop ALWAYS continues
-                    await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), timeout=45.0)
+                    await asyncio.wait_for(
+                        asyncio.gather(*tasks, return_exceptions=True), timeout=45.0
+                    )
                 except asyncio.TimeoutError:
-                    logger.warning("Batch monitor check reached 45s timeout; proceeding to next cycle.")
+                    logger.warning(
+                        "Batch monitor check reached 45s timeout; proceeding to next cycle."
+                    )
 
         except Exception as e:
             logger.error(f"Error in monitoring loop: {e}")
@@ -396,11 +431,10 @@ async def sync_monitor_receipt_status(monitor_id: int) -> Optional[Dict[str, Any
         if not a_state:
             return None
 
-        active_receipts_str = a_state["active_receipts"] if a_state["active_receipts"] else ""
-        if not active_receipts_str:
-            return None
-
-        receipt_ids = [r.strip() for r in active_receipts_str.split(",") if r.strip()]
+        active_receipts_str = (
+            a_state["active_receipts"] if a_state["active_receipts"] else ""
+        )
+        receipt_ids = parse_receipt_list(active_receipts_str)
         if not receipt_ids:
             return None
 
@@ -415,7 +449,8 @@ async def sync_monitor_receipt_status(monitor_id: int) -> Optional[Dict[str, Any
             ack_by = str(status.get("acknowledged_by", "") or "")
             ack_device = str(status.get("acknowledged_by_device", "") or "")
 
-            cursor.execute("""
+            cursor.execute(
+                """
                 UPDATE alert_state
                 SET receipt_acknowledged = ?,
                     receipt_acknowledged_at = ?,
@@ -423,15 +458,20 @@ async def sync_monitor_receipt_status(monitor_id: int) -> Optional[Dict[str, Any
                     receipt_acknowledged_device = ?,
                     receipt_last_checked = ?
                 WHERE monitor_id = ?
-            """, (is_ack, ack_at, ack_by, ack_device, now_ts, monitor_id))
+            """,
+                (is_ack, ack_at, ack_by, ack_device, now_ts, monitor_id),
+            )
             return status
 
         # If query returned nothing, update last checked timestamp
-        cursor.execute("""
+        cursor.execute(
+            """
             UPDATE alert_state
             SET receipt_last_checked = ?
             WHERE monitor_id = ?
-        """, (now_ts, monitor_id))
+        """,
+            (now_ts, monitor_id),
+        )
         return None
 
 
@@ -459,7 +499,9 @@ async def watchdog_worker_loop(task_holder: Optional[Dict[str, Any]] = None):
                 try:
                     with get_db() as conn:
                         cursor = conn.cursor()
-                        cursor.execute("SELECT COUNT(*) as cnt FROM monitors WHERE is_active = 1")
+                        cursor.execute(
+                            "SELECT COUNT(*) as cnt FROM monitors WHERE is_active = 1"
+                        )
                         row = cursor.fetchone()
                         has_active_monitors = bool(row and row["cnt"] > 0)
                 except Exception as db_err:
@@ -467,12 +509,14 @@ async def watchdog_worker_loop(task_holder: Optional[Dict[str, Any]] = None):
                     has_active_monitors = True
 
                 if has_active_monitors:
-                    logger.critical(f"WATCHDOG: Monitoring worker stalled! No heartbeat for {int(stalled_duration)}s.")
+                    logger.critical(
+                        f"WATCHDOG: Monitoring worker stalled! No heartbeat for {int(stalled_duration)}s."
+                    )
                     if not watchdog_alert_sent:
                         await send_pushover_notification(
                             title="CRITICAL: Site Monitor Worker Stalled",
                             message=f"Site Monitor background worker has stopped responding (no heartbeat for {int(stalled_duration)}s).\nAttempting automatic task restart.",
-                            priority=1
+                            priority=1,
                         )
                         watchdog_alert_sent = True
 
@@ -483,7 +527,9 @@ async def watchdog_worker_loop(task_holder: Optional[Dict[str, Any]] = None):
                             logger.info("Watchdog cancelling stalled worker task...")
                             old_task.cancel()
                         logger.info("Watchdog relaunching monitoring_worker_loop...")
-                        task_holder["worker_task"] = asyncio.create_task(monitoring_worker_loop())
+                        task_holder["worker_task"] = asyncio.create_task(
+                            monitoring_worker_loop()
+                        )
                         update_worker_heartbeat()
             else:
                 if watchdog_alert_sent and stalled_duration < 60.0:
@@ -491,7 +537,7 @@ async def watchdog_worker_loop(task_holder: Optional[Dict[str, Any]] = None):
                     await send_pushover_notification(
                         title="RECOVERED: Site Monitor Worker Resumed",
                         message="Site Monitor background monitoring worker has recovered and resumed normal operation.",
-                        priority=0
+                        priority=0,
                     )
                     watchdog_alert_sent = False
 
@@ -499,19 +545,22 @@ async def watchdog_worker_loop(task_holder: Optional[Dict[str, Any]] = None):
             try:
                 ping_url = get_setting("heartbeat_ping_url", "").strip()
                 if ping_url:
-                    try:
-                        interval_mins = int(get_setting("heartbeat_ping_interval_minutes", "15"))
-                    except ValueError:
-                        interval_mins = 15
+                    interval_mins = get_setting_int(
+                        "heartbeat_ping_interval_minutes", 15
+                    )
                     interval_secs = max(60, interval_mins * 60)
 
                     if now - last_ping_time >= interval_secs:
                         last_ping_time = now
                         async with httpx.AsyncClient(timeout=10.0) as client:
                             resp = await client.get(ping_url)
-                            logger.info(f"Dead Man's Switch external ping sent to {ping_url} (HTTP {resp.status_code})")
+                            logger.info(
+                                f"Dead Man's Switch external ping sent to {ping_url} (HTTP {resp.status_code})"
+                            )
             except Exception as ping_err:
-                logger.warning(f"Failed to send Dead Man's Switch external ping: {ping_err}")
+                logger.warning(
+                    f"Failed to send Dead Man's Switch external ping: {ping_err}"
+                )
 
             # 3. Periodic Pushover Receipt Acknowledgment Polling (every 60s for down monitors with unacknowledged receipts)
             if now - last_receipt_poll_time >= 60.0:
@@ -533,6 +582,3 @@ async def watchdog_worker_loop(task_holder: Optional[Dict[str, Any]] = None):
             logger.error(f"Error in watchdog loop: {e}")
 
         await asyncio.sleep(30)
-
-
-

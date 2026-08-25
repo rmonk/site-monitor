@@ -5,12 +5,14 @@ from app.config import DB_PATH, INITIAL_ADMIN_USER, INITIAL_ADMIN_PASSWORD
 
 logger = logging.getLogger("site_monitor.database")
 
+
 def get_db_connection():
     conn = sqlite3.connect(DB_PATH, timeout=15.0)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON;")
     conn.execute("PRAGMA journal_mode = WAL;")
     return conn
+
 
 @contextmanager
 def get_db():
@@ -23,6 +25,7 @@ def get_db():
         raise
     finally:
         conn.close()
+
 
 def init_db():
     """Initialize database tables and default values."""
@@ -72,11 +75,17 @@ def init_db():
         cursor.execute("PRAGMA table_info(monitors);")
         columns = [row["name"] for row in cursor.fetchall()]
         if "capture_screenshots" not in columns:
-            cursor.execute("ALTER TABLE monitors ADD COLUMN capture_screenshots INTEGER DEFAULT NULL;")
+            cursor.execute(
+                "ALTER TABLE monitors ADD COLUMN capture_screenshots INTEGER DEFAULT NULL;"
+            )
         if "last_success_screenshot_time" not in columns:
-            cursor.execute("ALTER TABLE monitors ADD COLUMN last_success_screenshot_time TEXT;")
+            cursor.execute(
+                "ALTER TABLE monitors ADD COLUMN last_success_screenshot_time TEXT;"
+            )
         if "last_failed_screenshot_time" not in columns:
-            cursor.execute("ALTER TABLE monitors ADD COLUMN last_failed_screenshot_time TEXT;")
+            cursor.execute(
+                "ALTER TABLE monitors ADD COLUMN last_failed_screenshot_time TEXT;"
+            )
 
         # Check history table
         cursor.execute("""
@@ -115,17 +124,29 @@ def init_db():
         cursor.execute("PRAGMA table_info(alert_state);")
         as_columns = [row["name"] for row in cursor.fetchall()]
         if "active_receipts" not in as_columns:
-            cursor.execute("ALTER TABLE alert_state ADD COLUMN active_receipts TEXT DEFAULT '';")
+            cursor.execute(
+                "ALTER TABLE alert_state ADD COLUMN active_receipts TEXT DEFAULT '';"
+            )
         if "receipt_acknowledged" not in as_columns:
-            cursor.execute("ALTER TABLE alert_state ADD COLUMN receipt_acknowledged INTEGER DEFAULT 0;")
+            cursor.execute(
+                "ALTER TABLE alert_state ADD COLUMN receipt_acknowledged INTEGER DEFAULT 0;"
+            )
         if "receipt_acknowledged_at" not in as_columns:
-            cursor.execute("ALTER TABLE alert_state ADD COLUMN receipt_acknowledged_at INTEGER DEFAULT 0;")
+            cursor.execute(
+                "ALTER TABLE alert_state ADD COLUMN receipt_acknowledged_at INTEGER DEFAULT 0;"
+            )
         if "receipt_acknowledged_by" not in as_columns:
-            cursor.execute("ALTER TABLE alert_state ADD COLUMN receipt_acknowledged_by TEXT DEFAULT '';")
+            cursor.execute(
+                "ALTER TABLE alert_state ADD COLUMN receipt_acknowledged_by TEXT DEFAULT '';"
+            )
         if "receipt_acknowledged_device" not in as_columns:
-            cursor.execute("ALTER TABLE alert_state ADD COLUMN receipt_acknowledged_device TEXT DEFAULT '';")
+            cursor.execute(
+                "ALTER TABLE alert_state ADD COLUMN receipt_acknowledged_device TEXT DEFAULT '';"
+            )
         if "receipt_last_checked" not in as_columns:
-            cursor.execute("ALTER TABLE alert_state ADD COLUMN receipt_last_checked INTEGER DEFAULT 0;")
+            cursor.execute(
+                "ALTER TABLE alert_state ADD COLUMN receipt_last_checked INTEGER DEFAULT 0;"
+            )
 
         # Default settings if not present
         default_settings = {
@@ -147,13 +168,12 @@ def init_db():
             "theme_custom_card": "#ffffff",
             "theme_custom_text": "#212529",
             "heartbeat_ping_url": "",
-            "heartbeat_ping_interval_minutes": "15"
+            "heartbeat_ping_interval_minutes": "15",
         }
 
         for key, val in default_settings.items():
             cursor.execute(
-                "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)",
-                (key, val)
+                "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", (key, val)
             )
 
         # Create initial admin user if no users exist
@@ -161,12 +181,14 @@ def init_db():
         user_count = cursor.fetchone()["count"]
         if user_count == 0:
             from app.auth import hash_password
+
             pwd_hash = hash_password(INITIAL_ADMIN_PASSWORD)
             cursor.execute(
                 "INSERT INTO users (username, password_hash) VALUES (?, ?)",
-                (INITIAL_ADMIN_USER, pwd_hash)
+                (INITIAL_ADMIN_USER, pwd_hash),
             )
             logger.info(f"Initialized initial admin user: '{INITIAL_ADMIN_USER}'")
+
 
 def get_setting(key: str, default: str = "") -> str:
     with get_db() as conn:
@@ -175,16 +197,49 @@ def get_setting(key: str, default: str = "") -> str:
         row = cursor.fetchone()
         return row["value"] if row else default
 
+
+def get_setting_int(key: str, default: int = 0) -> int:
+    """Retrieves an integer setting with fallback."""
+    val = get_setting(key, str(default)).strip()
+    try:
+        return int(val)
+    except (ValueError, TypeError):
+        return default
+
+
+def get_setting_bool(key: str, default: bool = False) -> bool:
+    """Retrieves a boolean setting evaluating truthy strings."""
+    val = get_setting(key, "true" if default else "false").strip().lower()
+    return val in ("true", "1", "yes", "on", "enabled")
+
+
 def set_setting(key: str, value: str):
     with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute(
             "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-            (key, str(value))
+            (key, str(value)),
         )
+
 
 def get_all_settings() -> dict:
     with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute("SELECT key, value FROM settings")
         return {row["key"]: row["value"] for row in cursor.fetchall()}
+
+
+def parse_receipt_list(receipts_str: Optional[str]) -> list:
+    """Splits a comma-separated receipts string into a cleaned list of receipt IDs."""
+    if not receipts_str:
+        return []
+    return [r.strip() for r in str(receipts_str).split(",") if r.strip()]
+
+
+def format_utc_timestamp(ts: Optional[int]) -> str:
+    """Formats a Unix epoch timestamp into UTC ISO/readable string, or empty string if None/0."""
+    if not ts or ts <= 0:
+        return ""
+    from datetime import datetime, timezone
+
+    return datetime.fromtimestamp(ts, timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
