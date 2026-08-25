@@ -27,6 +27,8 @@ A lightweight, containerized website monitoring application with a web UI and Pu
   - **Repeat Alerts**: Configurable re-alert behavior with default global settings and per-host overrides (enable/disable, custom interval in minutes).
   - **Emergency Priority & Auto-Cancellation**: Option to send downtime alerts with Emergency Priority (`priority=2`) and automatically cancel active siren/retry receipts via Pushover's receipt cancellation API when the site recovers.
   - **Recovery Notifications**: Automatic notification when a host recovers and returns to UP status.
+  - **Pushover Receipt Acknowledgment Tracking**: Background polling (every 60s) and on-demand syncing (`/sync-receipt` and `/api/monitors/{id}/receipt`) to detect if an emergency alert has been acknowledged, by which device (e.g. `iPhone`, `iPad`), user key, and timestamp.
+  - **Dashboard Downtime Secondary Row**: Real-time attached sub-row on the status dashboard table showing live acknowledgment status and sync controls for all DOWN websites.
   - **Pushover Test Suite in UI**: Execute Normal Tests (Priority 0), Alert Tests (Priority 2 Emergency with receipt generation), and Recovery Tests (with automatic receipt cancellation) directly from the Settings page.
 
 - **Theming & Appearance Capabilities**:

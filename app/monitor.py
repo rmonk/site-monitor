@@ -6,7 +6,7 @@ import httpx
 from datetime import datetime, timezone, timedelta
 from typing import Optional, Dict, Any
 from app.database import get_db, get_setting
-from app.alerts import send_pushover_notification, cancel_pushover_receipt
+from app.alerts import send_pushover_notification, cancel_pushover_receipt, get_pushover_receipt_status
 from app.screenshots import capture_screenshot
 
 logger = logging.getLogger("site_monitor.checker")
@@ -255,7 +255,9 @@ async def check_monitor(monitor: Dict[str, Any], is_manual: bool = False) -> Dic
             # Reset state
             cursor.execute("""
                 UPDATE alert_state
-                SET consecutive_failures = 0, is_currently_down = 0, alert_count = 0, active_receipts = ''
+                SET consecutive_failures = 0, is_currently_down = 0, alert_count = 0, active_receipts = '',
+                    receipt_acknowledged = 0, receipt_acknowledged_at = 0, receipt_acknowledged_by = '',
+                    receipt_acknowledged_device = '', receipt_last_checked = 0
                 WHERE monitor_id = ?
             """, (monitor_id,))
 
@@ -382,15 +384,68 @@ async def monitoring_worker_loop():
         await asyncio.sleep(5)  # Check every 5 seconds for due monitors
 
 
+async def sync_monitor_receipt_status(monitor_id: int) -> Optional[Dict[str, Any]]:
+    """
+    Queries Pushover Receipts API for active receipts associated with a DOWN monitor
+    and updates alert_state in the database if acknowledged.
+    """
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM alert_state WHERE monitor_id = ?", (monitor_id,))
+        a_state = cursor.fetchone()
+        if not a_state:
+            return None
+
+        active_receipts_str = a_state["active_receipts"] if a_state["active_receipts"] else ""
+        if not active_receipts_str:
+            return None
+
+        receipt_ids = [r.strip() for r in active_receipts_str.split(",") if r.strip()]
+        if not receipt_ids:
+            return None
+
+        # Query status of the latest active receipt
+        latest_receipt = receipt_ids[-1]
+        status = await get_pushover_receipt_status(latest_receipt)
+        now_ts = int(time.time())
+
+        if status:
+            is_ack = 1 if status.get("acknowledged") else 0
+            ack_at = int(status.get("acknowledged_at", 0) or 0)
+            ack_by = str(status.get("acknowledged_by", "") or "")
+            ack_device = str(status.get("acknowledged_by_device", "") or "")
+
+            cursor.execute("""
+                UPDATE alert_state
+                SET receipt_acknowledged = ?,
+                    receipt_acknowledged_at = ?,
+                    receipt_acknowledged_by = ?,
+                    receipt_acknowledged_device = ?,
+                    receipt_last_checked = ?
+                WHERE monitor_id = ?
+            """, (is_ack, ack_at, ack_by, ack_device, now_ts, monitor_id))
+            return status
+
+        # If query returned nothing, update last checked timestamp
+        cursor.execute("""
+            UPDATE alert_state
+            SET receipt_last_checked = ?
+            WHERE monitor_id = ?
+        """, (now_ts, monitor_id))
+        return None
+
+
 async def watchdog_worker_loop(task_holder: Optional[Dict[str, Any]] = None):
     """
     Independent watchdog task that monitors the health of the background worker loop,
     sends Pushover emergency alerts if the worker stalls, triggers auto-recovery,
+    polls receipt acknowledgment status for down hosts every 60 seconds,
     and sends periodic Dead Man's Switch external heartbeat pings.
     """
     logger.info("Starting site monitoring watchdog loop...")
     watchdog_alert_sent = False
     last_ping_time = 0.0
+    last_receipt_poll_time = 0.0
 
     while True:
         try:
@@ -458,9 +513,26 @@ async def watchdog_worker_loop(task_holder: Optional[Dict[str, Any]] = None):
             except Exception as ping_err:
                 logger.warning(f"Failed to send Dead Man's Switch external ping: {ping_err}")
 
+            # 3. Periodic Pushover Receipt Acknowledgment Polling (every 60s for down monitors with unacknowledged receipts)
+            if now - last_receipt_poll_time >= 60.0:
+                last_receipt_poll_time = now
+                try:
+                    with get_db() as conn:
+                        cursor = conn.cursor()
+                        cursor.execute("""
+                            SELECT monitor_id FROM alert_state
+                            WHERE is_currently_down = 1 AND active_receipts != '' AND receipt_acknowledged = 0
+                        """)
+                        down_rows = cursor.fetchall()
+                    for row in down_rows:
+                        await sync_monitor_receipt_status(row["monitor_id"])
+                except Exception as r_err:
+                    logger.error(f"Error in periodic receipt status polling: {r_err}")
+
         except Exception as e:
             logger.error(f"Error in watchdog loop: {e}")
 
         await asyncio.sleep(30)
+
 
 

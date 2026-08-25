@@ -95,6 +95,17 @@
   - [x] Add automated unit tests in `test_app.py` for receipt cancellation and test endpoints
   - [x] Commit to `devel`, merge to `main`, and push to remote `origin`
 
+- [x] **13. Pushover Receipt Acknowledgment Monitoring & Dashboard Sub-Row**
+  - [x] Add `get_pushover_receipt_status` API query function in `app/alerts.py`
+  - [x] Add `receipt_acknowledged`, `receipt_acknowledged_at`, `receipt_acknowledged_by`, `receipt_acknowledged_device` columns in `alert_state` table in `app/database.py`
+  - [x] Implement periodic 60s background polling for DOWN monitors in `watchdog_worker_loop()` and `sync_monitor_receipt_status()` in `app/monitor.py`
+  - [x] Add on-demand sync endpoint (`POST /monitors/{id}/sync-receipt`) and JSON API endpoint (`GET /api/monitors/{id}/receipt`) in `app/main.py`
+  - [x] Add attached secondary acknowledgment row to dashboard table in `app/templates/dashboard.html` showing confirmation device, user, timestamp, or pending state
+  - [x] Add Pushover acknowledgment card on Host Detail page in `app/templates/monitor_detail.html`
+  - [x] Add automated unit and integration tests in `scratch/test_fixes.py` and `test_app.py`
+  - [x] Commit to `devel`, merge to `main`, and push to remote `origin`
+
+
 
 
 

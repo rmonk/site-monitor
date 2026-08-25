@@ -18,11 +18,15 @@ from app.auth import (
     hash_password, verify_password, create_session, remove_session,
     get_current_user, is_authenticated, check_access
 )
+from datetime import datetime, timezone
 from app.alerts import (
     send_test_alert, send_normal_test_alert,
     send_down_test_alert, send_recovery_test_alert
 )
-from app.monitor import check_monitor, monitoring_worker_loop, watchdog_worker_loop, get_worker_heartbeat
+from app.monitor import (
+    check_monitor, monitoring_worker_loop, watchdog_worker_loop,
+    get_worker_heartbeat, sync_monitor_receipt_status
+)
 from app.screenshots import get_screenshots_dir
 from fastapi.responses import FileResponse
 
@@ -181,7 +185,7 @@ async def dashboard(request: Request):
             """, (m_dict["id"],))
             latest_check = cursor.fetchone()
 
-            cursor.execute("SELECT is_currently_down FROM alert_state WHERE monitor_id = ?", (m_dict["id"],))
+            cursor.execute("SELECT * FROM alert_state WHERE monitor_id = ?", (m_dict["id"],))
             a_state = cursor.fetchone()
 
             if a_state and a_state["is_currently_down"] == 1:
@@ -198,6 +202,19 @@ async def dashboard(request: Request):
 
             m_dict["last_response_time_ms"] = latest_check["response_time_ms"] if latest_check else None
             m_dict["last_check_time"] = latest_check["timestamp"] if latest_check else None
+
+            # Pushover Receipt & Acknowledgment details
+            m_dict["is_currently_down"] = a_state["is_currently_down"] if a_state else 0
+            m_dict["active_receipts"] = a_state["active_receipts"] if a_state and a_state["active_receipts"] else ""
+            m_dict["receipt_acknowledged"] = a_state["receipt_acknowledged"] if a_state else 0
+            m_dict["receipt_acknowledged_by"] = a_state["receipt_acknowledged_by"] if a_state else ""
+            m_dict["receipt_acknowledged_device"] = a_state["receipt_acknowledged_device"] if a_state else ""
+            
+            ack_at_ts = a_state["receipt_acknowledged_at"] if a_state else 0
+            if ack_at_ts and ack_at_ts > 0:
+                m_dict["receipt_acknowledged_at_formatted"] = datetime.fromtimestamp(ack_at_ts, timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+            else:
+                m_dict["receipt_acknowledged_at_formatted"] = ""
 
             monitors.append(m_dict)
 
@@ -339,10 +356,18 @@ async def monitor_detail(request: Request, monitor_id: int):
     default_repeat_interval = get_setting("default_repeat_interval_minutes", "60")
     default_capture_screenshots = get_setting("default_capture_screenshots", "true").lower() in ("true", "1", "yes")
 
+    a_dict = dict(a_state) if a_state else None
+    if a_dict:
+        ack_at = a_dict.get("receipt_acknowledged_at", 0)
+        if ack_at and ack_at > 0:
+            a_dict["receipt_acknowledged_at_formatted"] = datetime.fromtimestamp(ack_at, timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+        else:
+            a_dict["receipt_acknowledged_at_formatted"] = ""
+
     ctx = get_template_context(request)
     ctx.update({
         "monitor": dict(m_row),
-        "alert_state": dict(a_state) if a_state else None,
+        "alert_state": a_dict,
         "history": history,
         "default_repeat_alerts": default_repeat,
         "default_repeat_interval": default_repeat_interval,
@@ -429,6 +454,57 @@ async def monitor_check_now(request: Request, monitor_id: int):
     referer = request.headers.get("referer", f"/monitors/{monitor_id}")
     msg_type = "success" if result["is_up"] else "danger"
     return RedirectResponse(url=f"{referer}?msg=Check+completed:+{status_msg}&type={msg_type}", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@app.post("/monitors/{monitor_id}/sync-receipt")
+async def monitor_sync_receipt_post(request: Request, monitor_id: int):
+    check_access(request, require_write=False)
+    status_res = await sync_monitor_receipt_status(monitor_id)
+    referer = request.headers.get("referer", f"/monitors/{monitor_id}")
+    clean_referer = referer.split("?")[0]
+
+    if status_res:
+        if status_res.get("acknowledged"):
+            device = status_res.get("acknowledged_by_device") or "user device"
+            user = status_res.get("acknowledged_by") or "user"
+            msg = f"Receipt+synchronized:+Acknowledged+on+{device}+(User:+{user})"
+            msg_type = "success"
+        else:
+            msg = "Receipt+synchronized:+Still+pending+acknowledgment"
+            msg_type = "warning"
+    else:
+        msg = "No+active+receipt+found+or+Pushover+query+failed"
+        msg_type = "info"
+
+    return RedirectResponse(url=f"{clean_referer}?msg={msg}&type={msg_type}", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@app.get("/api/monitors/{monitor_id}/receipt")
+async def monitor_receipt_api(request: Request, monitor_id: int):
+    status_res = await sync_monitor_receipt_status(monitor_id)
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM alert_state WHERE monitor_id = ?", (monitor_id,))
+        a_state = cursor.fetchone()
+
+    if not a_state:
+        raise HTTPException(status_code=404, detail="Alert state not found")
+
+    ack_at_ts = a_state["receipt_acknowledged_at"]
+    formatted_ts = datetime.fromtimestamp(ack_at_ts, timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC") if (ack_at_ts and ack_at_ts > 0) else ""
+
+    return {
+        "monitor_id": monitor_id,
+        "is_currently_down": a_state["is_currently_down"],
+        "active_receipts": a_state["active_receipts"],
+        "receipt_acknowledged": bool(a_state["receipt_acknowledged"]),
+        "receipt_acknowledged_at": a_state["receipt_acknowledged_at"],
+        "receipt_acknowledged_at_formatted": formatted_ts,
+        "receipt_acknowledged_by": a_state["receipt_acknowledged_by"],
+        "receipt_acknowledged_device": a_state["receipt_acknowledged_device"],
+        "receipt_last_checked": a_state["receipt_last_checked"],
+        "live_status": status_res
+    }
 
 
 @app.get("/settings", response_class=HTMLResponse)

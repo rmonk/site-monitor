@@ -7,6 +7,7 @@ logger = logging.getLogger("site_monitor.alerts")
 
 PUSHOVER_URL = "https://api.pushover.net/1/messages.json"
 PUSHOVER_CANCEL_URL = "https://api.pushover.net/1/receipts/{receipt}/cancel.json"
+PUSHOVER_RECEIPT_STATUS_URL = "https://api.pushover.net/1/receipts/{receipt}.json"
 
 def is_pushover_configured() -> bool:
     enabled = get_setting("pushover_enabled", "false").lower() in ("true", "1", "yes")
@@ -66,6 +67,52 @@ async def send_pushover_notification(
         err = f"Failed to send Pushover notification: {e}"
         logger.error(err)
         return False, err, None
+
+async def get_pushover_receipt_status(receipt_id: str) -> Optional[dict]:
+    """
+    Queries Pushover Receipts API for acknowledgment status of an emergency alert.
+    Returns parsed dictionary or None if query fails.
+    """
+    if not is_pushover_configured():
+        return None
+
+    if not receipt_id or not receipt_id.strip():
+        return None
+
+    receipt_id = receipt_id.strip()
+    token = get_setting("pushover_api_token", "").strip()
+    url = PUSHOVER_RECEIPT_STATUS_URL.format(receipt=receipt_id)
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(url, params={"token": token})
+            if resp.status_code == 200:
+                data = resp.json()
+                if data.get("status") == 1:
+                    ack = bool(data.get("acknowledged") == 1)
+                    ack_at = int(data.get("acknowledged_at", 0) or 0)
+                    ack_by = str(data.get("acknowledged_by", "") or "")
+                    ack_device = str(data.get("acknowledged_by_device", "") or "")
+                    expired = bool(data.get("expired") == 1)
+                    expires_at = int(data.get("expires_at", 0) or 0)
+
+                    return {
+                        "receipt": receipt_id,
+                        "acknowledged": ack,
+                        "acknowledged_at": ack_at,
+                        "acknowledged_by": ack_by,
+                        "acknowledged_by_device": ack_device,
+                        "expired": expired,
+                        "expires_at": expires_at
+                    }
+                else:
+                    logger.warning(f"Pushover receipt {receipt_id} status error: {data}")
+            else:
+                logger.warning(f"Pushover receipt query returned HTTP {resp.status_code}: {resp.text}")
+    except Exception as e:
+        logger.error(f"Failed to query Pushover receipt status for {receipt_id}: {e}")
+
+    return None
 
 async def cancel_pushover_receipt(receipt_id: str) -> Tuple[bool, str]:
     """

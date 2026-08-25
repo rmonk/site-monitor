@@ -102,6 +102,11 @@ def init_db():
                 last_alert_time INTEGER DEFAULT 0,
                 alert_count INTEGER NOT NULL DEFAULT 0,
                 active_receipts TEXT DEFAULT '',
+                receipt_acknowledged INTEGER DEFAULT 0,
+                receipt_acknowledged_at INTEGER DEFAULT 0,
+                receipt_acknowledged_by TEXT DEFAULT '',
+                receipt_acknowledged_device TEXT DEFAULT '',
+                receipt_last_checked INTEGER DEFAULT 0,
                 FOREIGN KEY (monitor_id) REFERENCES monitors(id) ON DELETE CASCADE
             );
         """)
@@ -111,6 +116,16 @@ def init_db():
         as_columns = [row["name"] for row in cursor.fetchall()]
         if "active_receipts" not in as_columns:
             cursor.execute("ALTER TABLE alert_state ADD COLUMN active_receipts TEXT DEFAULT '';")
+        if "receipt_acknowledged" not in as_columns:
+            cursor.execute("ALTER TABLE alert_state ADD COLUMN receipt_acknowledged INTEGER DEFAULT 0;")
+        if "receipt_acknowledged_at" not in as_columns:
+            cursor.execute("ALTER TABLE alert_state ADD COLUMN receipt_acknowledged_at INTEGER DEFAULT 0;")
+        if "receipt_acknowledged_by" not in as_columns:
+            cursor.execute("ALTER TABLE alert_state ADD COLUMN receipt_acknowledged_by TEXT DEFAULT '';")
+        if "receipt_acknowledged_device" not in as_columns:
+            cursor.execute("ALTER TABLE alert_state ADD COLUMN receipt_acknowledged_device TEXT DEFAULT '';")
+        if "receipt_last_checked" not in as_columns:
+            cursor.execute("ALTER TABLE alert_state ADD COLUMN receipt_last_checked INTEGER DEFAULT 0;")
 
         # Default settings if not present
         default_settings = {

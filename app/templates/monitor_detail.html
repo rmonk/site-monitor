@@ -46,6 +46,56 @@
     </div>
 </div>
 
+{% if alert_state and alert_state.is_currently_down == 1 %}
+<div class="card border-0 shadow-sm mb-4">
+    <div class="card-body py-3 d-flex flex-wrap align-items-center justify-content-between gap-3 bg-body-tertiary rounded border">
+        <div class="d-flex align-items-center gap-3">
+            {% if alert_state.receipt_acknowledged == 1 %}
+                <div class="fs-3 text-success"><i class="bi bi-check-circle-fill"></i></div>
+                <div>
+                    <h6 class="fw-bold mb-1 text-success">Pushover Emergency Alert Acknowledged</h6>
+                    <div class="small">
+                        Confirmed on <strong>{{ alert_state.receipt_acknowledged_device or 'User Device' }}</strong>
+                        {% if alert_state.receipt_acknowledged_by %}
+                            (User: <code>{{ alert_state.receipt_acknowledged_by }}</code>)
+                        {% endif %}
+                        {% if alert_state.receipt_acknowledged_at_formatted %}
+                            at <span class="fw-semibold">{{ alert_state.receipt_acknowledged_at_formatted }}</span>
+                        {% endif %}
+                        {% if alert_state.active_receipts %}
+                            &bull; <span class="text-body-secondary">Receipt: <code>{{ alert_state.active_receipts }}</code></span>
+                        {% endif %}
+                    </div>
+                </div>
+            {% elif alert_state.active_receipts %}
+                <div class="fs-3 text-warning-emphasis"><i class="bi bi-clock-history"></i></div>
+                <div>
+                    <h6 class="fw-bold mb-1 text-warning-emphasis">Emergency Downtime Alert Active</h6>
+                    <div class="small text-body-secondary">
+                        Awaiting user acknowledgment in Pushover &bull; Receipt: <code>{{ alert_state.active_receipts }}</code>
+                    </div>
+                </div>
+            {% else %}
+                <div class="fs-3 text-danger"><i class="bi bi-exclamation-octagon-fill"></i></div>
+                <div>
+                    <h6 class="fw-bold mb-1 text-danger">Host is Currently DOWN</h6>
+                    <div class="small text-body-secondary">Consecutive failures: {{ alert_state.consecutive_failures }}</div>
+                </div>
+            {% endif %}
+        </div>
+        {% if alert_state.active_receipts %}
+        <div>
+            <form action="/monitors/{{ monitor.id }}/sync-receipt" method="post" class="d-inline">
+                <button type="submit" class="btn btn-outline-secondary btn-sm">
+                    <i class="bi bi-arrow-repeat me-1"></i> Sync Acknowledgment
+                </button>
+            </form>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endif %}
+
 <div class="row g-3 mb-4">
     <div class="col-md-3">
         <div class="card border-0 shadow-sm h-100">

@@ -1,6 +1,9 @@
 import os
 import shutil
-import pytest
+try:
+    import pytest
+except ImportError:
+    pytest = None
 from pathlib import Path
 from fastapi.testclient import TestClient
 
@@ -294,5 +297,58 @@ def test_pushover_test_suite_routes():
         "pushover_api_token": "",
         "pushover_user_key": ""
     }, cookies={"session_token": session_token})
+
+def test_receipt_sync_and_api_routes():
+    login_res = client.post("/login", data={"username": "testadmin", "password": "testsecret123"}, follow_redirects=False)
+    session_token = login_res.cookies["session_token"]
+
+    # 1. Create a monitor
+    create_res = client.post("/monitors/new", data={
+        "name": "Sync Test Host",
+        "url": "https://example-sync.com",
+        "check_interval": "60",
+        "timeout": "10",
+        "failure_threshold": "1",
+        "capture_screenshots": "0"
+    }, cookies={"session_token": session_token}, follow_redirects=False)
+    assert create_res.status_code == 303
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT id FROM monitors WHERE name = 'Sync Test Host'")
+        m_row = cursor.fetchone()
+        m_id = m_row["id"]
+        cursor.execute("UPDATE alert_state SET is_currently_down = 1, active_receipts = 'rcpt_sync_test' WHERE monitor_id = ?", (m_id,))
+
+    # 2. Test sync-receipt POST route
+    sync_res = client.post(f"/monitors/{m_id}/sync-receipt", cookies={"session_token": session_token}, follow_redirects=False)
+    assert sync_res.status_code == 303
+    assert f"/monitors/{m_id}" in sync_res.headers["location"]
+
+    # 3. Test receipt JSON API route
+    api_res = client.get(f"/api/monitors/{m_id}/receipt")
+    assert api_res.status_code == 200
+    data = api_res.json()
+    assert data["monitor_id"] == m_id
+    assert data["is_currently_down"] == 1
+    assert data["active_receipts"] == "rcpt_sync_test"
+
+
+if __name__ == "__main__":
+    setup_module(None)
+    test_initial_setup()
+    test_dashboard_unauth()
+    test_login_flow()
+    test_monitor_lifecycle()
+    test_check_now_flow()
+    test_settings_update()
+    test_require_login_mode()
+    test_healthz_endpoint()
+    test_heartbeat_settings()
+    test_pushover_test_suite_routes()
+    test_receipt_sync_and_api_routes()
+    print("ALL test_app.py tests passed successfully!")
+
+
 
 

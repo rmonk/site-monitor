@@ -159,6 +159,58 @@
                             </div>
                         </td>
                     </tr>
+                    {% if m.last_is_up == 0 or m.is_currently_down == 1 %}
+                    <tr class="table-active border-top-0">
+                        <td colspan="7" class="py-2 px-3">
+                            <div class="d-flex flex-wrap align-items-center justify-content-between gap-2">
+                                <div class="d-flex align-items-center gap-2 small">
+                                    {% if m.receipt_acknowledged == 1 %}
+                                        <span class="badge bg-success-subtle text-success border border-success-subtle px-2 py-1">
+                                            <i class="bi bi-check-circle-fill me-1"></i> Acknowledged
+                                        </span>
+                                        <span>
+                                            Confirmed by <strong>{{ m.receipt_acknowledged_device or 'User Device' }}</strong>
+                                            {% if m.receipt_acknowledged_by %}
+                                                (<code class="text-body-secondary">{{ m.receipt_acknowledged_by }}</code>)
+                                            {% endif %}
+                                            {% if m.receipt_acknowledged_at_formatted %}
+                                                at <span class="fw-semibold">{{ m.receipt_acknowledged_at_formatted }}</span>
+                                            {% endif %}
+                                        </span>
+                                    {% elif m.active_receipts %}
+                                        <span class="badge bg-warning-subtle text-warning-emphasis border border-warning-subtle px-2 py-1">
+                                            <i class="bi bi-clock-history me-1"></i> Awaiting Acknowledgment
+                                        </span>
+                                        <span class="text-body-secondary">
+                                            Emergency alert sent &bull; Waiting for user acknowledgment in Pushover
+                                        </span>
+                                    {% else %}
+                                        <span class="badge bg-danger-subtle text-danger border border-danger-subtle px-2 py-1">
+                                            <i class="bi bi-exclamation-triangle-fill me-1"></i> Alert Active
+                                        </span>
+                                        <span class="text-body-secondary">Host is currently DOWN</span>
+                                    {% endif %}
+
+                                    {% if m.active_receipts %}
+                                        <span class="text-body-secondary small ms-2">
+                                            Receipt: <code class="user-select-all">{{ m.active_receipts }}</code>
+                                        </span>
+                                    {% endif %}
+                                </div>
+
+                                {% if m.active_receipts %}
+                                <div>
+                                    <form action="/monitors/{{ m.id }}/sync-receipt" method="post" class="d-inline">
+                                        <button type="submit" class="btn btn-outline-secondary btn-sm py-0 px-2 small" title="Query Pushover API for latest acknowledgment state">
+                                            <i class="bi bi-arrow-repeat me-1"></i> Sync Acknowledgment
+                                        </button>
+                                    </form>
+                                </div>
+                                {% endif %}
+                            </div>
+                        </td>
+                    </tr>
+                    {% endif %}
                     {% endfor %}
                 </tbody>
             </table>
