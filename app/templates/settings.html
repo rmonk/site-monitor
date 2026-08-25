@@ -263,6 +263,17 @@
                 <p class="text-body-secondary small mb-3">
                     Test different alert scenarios and verify receipt cancellation behavior:
                 </p>
+
+                {% if settings.last_test_receipt %}
+                <div class="alert alert-warning py-2 px-3 small d-flex align-items-center justify-content-between mb-3">
+                    <div>
+                        <i class="bi bi-exclamation-octagon-fill me-1 text-danger"></i>
+                        <strong>Active Test Alert Receipt(s):</strong> <code class="user-select-all">{{ settings.last_test_receipt }}</code>
+                        <div class="text-body-secondary mt-1">An emergency test alert is active. Click <strong>Recovery Test</strong> to send recovery and cancel it in Pushover.</div>
+                    </div>
+                </div>
+                {% endif %}
+
                 <div class="d-flex flex-wrap gap-2 align-items-center">
                     <form action="/settings/pushover/test/normal" method="post" class="d-inline">
                         <button type="submit" class="btn btn-outline-info btn-sm">
@@ -271,7 +282,7 @@
                     </form>
                     <form action="/settings/pushover/test/alert" method="post" class="d-inline">
                         <button type="submit" class="btn btn-outline-danger btn-sm">
-                            <i class="bi bi-exclamation-triangle me-1"></i> Alert Test (DOWN)
+                            <i class="bi bi-exclamation-triangle me-1"></i> Alert Test (Emergency Prio 2)
                         </button>
                     </form>
                     <form action="/settings/pushover/test/recovery" method="post" class="d-inline">
@@ -281,7 +292,7 @@
                     </form>
                 </div>
                 <div class="form-text mt-2">
-                    Running an <strong>Alert Test</strong> creates an active emergency alert and captures its receipt ID. Running a <strong>Recovery Test</strong> sends a recovery notification and cancels the active emergency alert via Pushover's receipt cancellation API.
+                    Running an <strong>Alert Test</strong> creates an active emergency alert and saves its receipt ID. Running a <strong>Recovery Test</strong> sends a recovery notification and cancels all active emergency test receipts via Pushover's receipt cancellation API.
                 </div>
             </div>
         </div>
