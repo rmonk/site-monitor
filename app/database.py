@@ -1,6 +1,7 @@
 import sqlite3
 import logging
 from contextlib import contextmanager
+from typing import Optional, List, Dict, Any
 from app.config import DB_PATH, INITIAL_ADMIN_USER, INITIAL_ADMIN_PASSWORD
 
 logger = logging.getLogger("site_monitor.database")
