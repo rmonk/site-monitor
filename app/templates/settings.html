@@ -142,7 +142,35 @@
                         </div>
                     </div>
 
-                    <button type="submit" class="btn btn-primary btn-sm px-3">Save Theme Settings</button>
+                    <!-- Default Timestamp Format -->
+                    <div class="mb-4 pt-2 border-top">
+                        <label class="form-label fw-bold d-flex align-items-center gap-2">
+                            <i class="bi bi-clock-history text-primary"></i> Default Timestamp Display
+                        </label>
+                        <div class="text-body-secondary small mb-3">Choose the default time format across the monitoring dashboard. Users can toggle their own preference in the top navigation bar.</div>
+                        <div class="row g-3">
+                            <div class="col-md-6">
+                                <div class="form-check p-3 border rounded h-100 bg-body-tertiary">
+                                    <input class="form-check-input" type="radio" name="default_time_display" id="time_display_utc" value="utc" {% if settings.default_time_display != 'local' %}checked{% endif %}>
+                                    <label class="form-check-label fw-semibold" for="time_display_utc">
+                                        <i class="bi bi-globe text-primary me-1"></i> UTC Time (Default)
+                                        <div class="text-body-secondary small fw-normal mt-1">Timestamps rendered with UTC designator (e.g. <code>2026-08-26 10:15:30 UTC</code>).</div>
+                                    </label>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="form-check p-3 border rounded h-100 bg-body-tertiary">
+                                    <input class="form-check-input" type="radio" name="default_time_display" id="time_display_local" value="local" {% if settings.default_time_display == 'local' %}checked{% endif %}>
+                                    <label class="form-check-label fw-semibold" for="time_display_local">
+                                        <i class="bi bi-geo-alt text-success me-1"></i> Local Browser Time
+                                        <div class="text-body-secondary small fw-normal mt-1">Timestamps converted to the visitor's local system timezone.</div>
+                                    </label>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <button type="submit" class="btn btn-primary btn-sm px-3">Save Appearance & Display Settings</button>
                 </form>
             </div>
         </div>

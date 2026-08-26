@@ -122,6 +122,16 @@
   - [x] Format Python code with `black`
   - [x] Commit and push branch `hide-disabled-screenshots` to remote `origin`
 
+- [x] **16. Per-User Local Time / UTC Timestamp Display Toggle & Service Default**
+  - [x] Created dedicated branch `timezone-toggle` based on `main`
+  - [x] Added `default_time_display` service setting (defaults to `utc`) configurable in `app/templates/settings.html` and saved in `POST /settings/theme`
+  - [x] Added per-user time display toggle dropdown next to Theme Mode switcher in navbar (`app/templates/base.html`)
+  - [x] Implemented instant client-side timezone formatting and Chart.js re-rendering in `app/static/app.js`
+  - [x] Added `app-timestamp` and `data-utc` attributes across dashboard, monitor detail, screenshot captions, and history tables
+  - [x] Added unit and integration tests verifying settings, cookie overrides, and template rendering
+  - [x] Formatted Python code with `black`
+
+
 
 
 

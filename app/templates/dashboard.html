@@ -109,7 +109,7 @@
                         </td>
                         <td>
                             {% if m.last_check_time %}
-                                <span class="small">{{ m.last_check_time }}</span>
+                                <span class="app-timestamp small" data-utc="{{ m.last_check_time }}">{{ m.last_check_time }}</span>
                             {% else %}
                                 <span class="text-body-secondary small">Never</span>
                             {% endif %}
@@ -138,12 +138,12 @@
                         </td>
                         <td class="text-end">
                             <div class="btn-group btn-group-sm">
-                                <a href="/monitors/{{ m.id }}" class="btn btn-outline-secondary" title="View History">
-                                    <i class="bi bi-clock-history"></i>
+                                <a href="/monitors/{{ m.id }}" class="btn btn-outline-primary" title="View Details">
+                                    <i class="bi bi-eye"></i>
                                 </a>
                                 {% if user %}
                                 <form action="/monitors/{{ m.id }}/check" method="post" class="d-inline">
-                                    <button type="submit" class="btn btn-outline-primary" title="Check Now">
+                                    <button type="submit" class="btn btn-outline-secondary" title="Check Now">
                                         <i class="bi bi-arrow-repeat"></i>
                                     </button>
                                 </form>
@@ -174,7 +174,7 @@
                                                 (<code class="text-body-secondary">{{ m.receipt_acknowledged_by }}</code>)
                                             {% endif %}
                                             {% if m.receipt_acknowledged_at_formatted %}
-                                                at <span class="fw-semibold">{{ m.receipt_acknowledged_at_formatted }}</span>
+                                                at <span class="app-timestamp fw-semibold" data-utc="{{ m.receipt_acknowledged_at_formatted }}">{{ m.receipt_acknowledged_at_formatted }}</span>
                                             {% endif %}
                                         </span>
                                     {% elif m.active_receipts %}

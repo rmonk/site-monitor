@@ -545,14 +545,100 @@ def test_monitor_detail_screenshots_visibility():
     assert "Request Screenshots" in res_enabled.text
 
 
+def test_time_display_settings_and_preferences():
+    """Verifies service default timestamp setting, per-user cookie toggle, and HTML attributes."""
+    login_res = client.post(
+        "/login",
+        data={"username": "testadmin", "password": "testsecret123"},
+        follow_redirects=False,
+    )
+    session_token = login_res.cookies["session_token"]
+
+    # 1. Default should be 'utc'
+    assert get_setting("default_time_display") == "utc"
+
+    # 2. Update service default to 'local' via settings form
+    res_set = client.post(
+        "/settings/theme",
+        data={
+            "theme_mode": "light",
+            "theme_color_preset": "default",
+            "default_time_display": "local",
+        },
+        cookies={"session_token": session_token},
+        follow_redirects=False,
+    )
+    assert res_set.status_code == 303
+    assert get_setting("default_time_display") == "local"
+
+    # 3. Check page without cookies reflects service default
+    res_dash = client.get("/")
+    assert res_dash.status_code == 200
+    assert 'data-time-display="local"' in res_dash.text
+    assert "timeDisplayDropdown" in res_dash.text
+
+    # 4. User preference toggle via /settings/time-display cookie route
+    res_toggle = client.post(
+        "/settings/time-display",
+        data={"time_display": "utc"},
+        follow_redirects=False,
+    )
+    assert res_toggle.status_code == 303
+    assert "time_display=utc" in res_toggle.headers.get("set-cookie", "")
+
+    # 5. User with cookie set to 'utc' overrides service default 'local'
+    res_override = client.get("/", cookies={"time_display": "utc"})
+    assert res_override.status_code == 200
+    assert 'data-time-display="utc"' in res_override.text
+
+    # Reset service default back to 'utc'
+    client.post(
+        "/settings/theme",
+        data={
+            "theme_mode": "light",
+            "theme_color_preset": "default",
+            "default_time_display": "utc",
+        },
+        cookies={"session_token": session_token},
+        follow_redirects=False,
+    )
+    assert get_setting("default_time_display") == "utc"
+
+
+def test_security_sanitization():
+    """Verifies open redirect prevention, path injection protection, and safe error handling."""
+    from app.main import resolve_internal_redirect
+
+    # 1. Test resolve_internal_redirect validator against open redirect vectors
+    assert resolve_internal_redirect("/settings") == "/settings"
+    assert resolve_internal_redirect("/monitors/1") == "/monitors/1"
+    assert resolve_internal_redirect("/monitors/42?msg=test") == "/monitors/42"
+    assert resolve_internal_redirect("https://attacker.com/evil", default="/") == "/"
+    assert (
+        resolve_internal_redirect("https://attacker.com", default="/default")
+        == "/default"
+    )
+    assert resolve_internal_redirect("//attacker.com", default="/") == "/"
+    assert resolve_internal_redirect(r"/\attacker.com", default="/") == "/"
+    assert resolve_internal_redirect(None, default="/") == "/"
+
+    # 2. Test screenshot path traversal protections
+    res_traversal = client.get("/screenshots/../../etc/passwd")
+    assert res_traversal.status_code in (400, 404)
+
+    res_invalid_name = client.get("/screenshots/arbitrary_file.txt")
+    assert res_invalid_name.status_code == 400
+
+
 if __name__ == "__main__":
     setup_module(None)
     test_initial_setup()
     test_public_dashboard_access()
     test_login_flow()
-    test_monitor_lifecycle()
-    test_check_now_flow()
-    test_settings_update()
+    test_monitor_crud_operations()
+    test_screenshot_route()
+    test_screenshot_settings()
+    test_theme_settings()
     test_require_login_mode()
     test_healthz_endpoint()
     test_heartbeat_settings()
@@ -560,4 +646,6 @@ if __name__ == "__main__":
     test_receipt_sync_and_api_routes()
     test_api_status_endpoint()
     test_monitor_detail_screenshots_visibility()
+    test_time_display_settings_and_preferences()
+    test_security_sanitization()
     print("ALL test_app.py tests passed successfully!")

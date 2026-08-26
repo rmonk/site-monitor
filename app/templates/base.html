@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en" data-bs-theme="{{ theme_mode if theme_mode in ['light', 'dark'] else 'light' }}" data-theme-mode="{{ theme_mode or 'light' }}" data-theme-preset="{{ theme_color_preset or 'default' }}" style="--custom-primary: {{ theme_custom_primary or '#0d6efd' }}; --custom-primary-rgb: {{ theme_custom_primary_rgb or '13, 110, 253' }}; --custom-bg: {{ theme_custom_bg or '#f8f9fa' }}; --custom-card: {{ theme_custom_card or '#ffffff' }}; --custom-text: {{ theme_custom_text or '#212529' }};">
+<html lang="en" data-bs-theme="{{ theme_mode if theme_mode in ['light', 'dark'] else 'light' }}" data-theme-mode="{{ theme_mode or 'light' }}" data-theme-preset="{{ theme_color_preset or 'default' }}" data-time-display="{{ time_display or 'utc' }}" style="--custom-primary: {{ theme_custom_primary or '#0d6efd' }}; --custom-primary-rgb: {{ theme_custom_primary_rgb or '13, 110, 253' }}; --custom-bg: {{ theme_custom_bg or '#f8f9fa' }}; --custom-card: {{ theme_custom_card or '#ffffff' }}; --custom-text: {{ theme_custom_text or '#212529' }};">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -44,7 +44,7 @@
                     {% endif %}
                 </ul>
 
-                <div class="d-flex align-items-center gap-3">
+                <div class="d-flex align-items-center gap-2">
                     <!-- Quick Theme Selector Dropdown -->
                     <div class="dropdown">
                         <button class="btn btn-outline-secondary btn-sm dropdown-toggle d-flex align-items-center gap-1" type="button" data-bs-toggle="dropdown" aria-expanded="false" title="Theme Mode">
@@ -98,6 +98,28 @@
                                 </button>
                             </li>
                             {% endif %}
+                        </ul>
+                    </div>
+
+                    <!-- Quick Time Display (UTC / Local) Selector Dropdown -->
+                    <div class="dropdown" id="timeDisplayDropdown">
+                        <button class="btn btn-outline-secondary btn-sm dropdown-toggle d-flex align-items-center gap-1" type="button" data-bs-toggle="dropdown" aria-expanded="false" title="Timestamp Display (UTC or Local Time)">
+                            <i class="bi bi-clock"></i>
+                            <span id="currentTimeDisplayLabel" class="d-none d-sm-inline">{% if time_display == 'local' %}Local{% else %}UTC{% endif %}</span>
+                        </button>
+                        <ul class="dropdown-menu dropdown-menu-end shadow-sm">
+                            <li>
+                                <button type="button" class="dropdown-item d-flex align-items-center justify-content-between time-option-utc {% if time_display == 'utc' or not time_display %}active{% endif %}" onclick="setTimeDisplayMode('utc')">
+                                    <span><i class="bi bi-globe me-2 text-primary"></i> UTC</span>
+                                    <i class="bi bi-check2 ms-2 checkmark-utc {% if time_display == 'local' %}d-none{% endif %}"></i>
+                                </button>
+                            </li>
+                            <li>
+                                <button type="button" class="dropdown-item d-flex align-items-center justify-content-between time-option-local {% if time_display == 'local' %}active{% endif %}" onclick="setTimeDisplayMode('local')">
+                                    <span><i class="bi bi-geo-alt me-2 text-success"></i> Local Time</span>
+                                    <i class="bi bi-check2 ms-2 checkmark-local {% if time_display != 'local' %}d-none{% endif %}"></i>
+                                </button>
+                            </li>
                         </ul>
                     </div>
 

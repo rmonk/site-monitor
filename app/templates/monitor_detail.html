@@ -60,7 +60,7 @@
                             (User: <code>{{ alert_state.receipt_acknowledged_by }}</code>)
                         {% endif %}
                         {% if alert_state.receipt_acknowledged_at_formatted %}
-                            at <span class="fw-semibold">{{ alert_state.receipt_acknowledged_at_formatted }}</span>
+                            at <span class="app-timestamp fw-semibold" data-utc="{{ alert_state.receipt_acknowledged_at_formatted }}">{{ alert_state.receipt_acknowledged_at_formatted }}</span>
                         {% endif %}
                         {% if alert_state.active_receipts %}
                             &bull; <span class="text-body-secondary">Receipt: <code>{{ alert_state.active_receipts }}</code></span>
@@ -188,7 +188,7 @@
                     <div class="d-flex align-items-center justify-content-between mb-2">
                         <h6 class="fw-bold mb-0 text-success"><i class="bi bi-check-circle-fill me-1"></i> Last Successful Request</h6>
                         {% if monitor.last_success_screenshot_time %}
-                            <span class="badge text-bg-success"><i class="bi bi-clock me-1"></i> Captured: {{ monitor.last_success_screenshot_time }}</span>
+                            <span class="badge text-bg-success"><i class="bi bi-clock me-1"></i> Captured: <span class="app-timestamp" data-utc="{{ monitor.last_success_screenshot_time }}">{{ monitor.last_success_screenshot_time }}</span></span>
                         {% else %}
                             <span class="badge text-bg-secondary">Not captured yet</span>
                         {% endif %}
@@ -213,7 +213,7 @@
                     <div class="d-flex align-items-center justify-content-between mb-2">
                         <h6 class="fw-bold mb-0 text-danger"><i class="bi bi-exclamation-triangle-fill me-1"></i> Current Failed Request</h6>
                         {% if monitor.last_failed_screenshot_time %}
-                            <span class="badge text-bg-danger"><i class="bi bi-clock me-1"></i> Failed: {{ monitor.last_failed_screenshot_time }}</span>
+                            <span class="badge text-bg-danger"><i class="bi bi-clock me-1"></i> Failed: <span class="app-timestamp" data-utc="{{ monitor.last_failed_screenshot_time }}">{{ monitor.last_failed_screenshot_time }}</span></span>
                         {% else %}
                             <span class="badge text-bg-danger">Failure detected</span>
                         {% endif %}
@@ -259,7 +259,7 @@
                 <tbody>
                     {% for h in history %}
                     <tr>
-                        <td>{{ h.timestamp }}</td>
+                        <td><span class="app-timestamp font-monospace small" data-utc="{{ h.timestamp }}">{{ h.timestamp }}</span></td>
                         <td>
                             {% if h.is_up == 1 %}
                                 <span class="badge text-bg-success"><i class="bi bi-check-circle me-1"></i> PASS</span>
@@ -314,13 +314,14 @@ document.addEventListener("DOMContentLoaded", function() {
     const rawHistory = {{ history | tojson }};
     // Sort chronologically (oldest to newest)
     const sorted = rawHistory.slice().reverse();
+    window.rawChartHistory = sorted;
 
-    const labels = sorted.map(item => item.timestamp);
+    const labels = sorted.map(item => typeof formatTimestamp === 'function' ? formatTimestamp(item.timestamp, getTimeDisplayMode()) : item.timestamp);
     const statusData = sorted.map(item => item.is_up);
     const responseTimes = sorted.map(item => item.response_time_ms !== null ? item.response_time_ms : 0);
 
     const ctx = document.getElementById('statusChart').getContext('2d');
-    new Chart(ctx, {
+    window.statusChartInstance = new Chart(ctx, {
         type: 'bar',
         data: {
             labels: labels,

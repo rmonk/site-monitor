@@ -15,9 +15,95 @@ function updateTheme() {
     }
 }
 
+// Time Display Mode (UTC / Local) Handling
+
+function getTimeDisplayMode() {
+    return localStorage.getItem('time_display') || document.documentElement.getAttribute('data-time-display') || 'utc';
+}
+
+function setTimeDisplayMode(mode) {
+    if (mode !== 'utc' && mode !== 'local') return;
+    localStorage.setItem('time_display', mode);
+    document.cookie = `time_display=${mode}; path=/; max-age=31536000; SameSite=Lax`;
+    document.documentElement.setAttribute('data-time-display', mode);
+
+    const label = document.getElementById('currentTimeDisplayLabel');
+    if (label) {
+        label.textContent = mode === 'local' ? 'Local' : 'UTC';
+    }
+
+    const utcBtn = document.querySelector('.time-option-utc');
+    const localBtn = document.querySelector('.time-option-local');
+    if (utcBtn) utcBtn.classList.toggle('active', mode === 'utc');
+    if (localBtn) localBtn.classList.toggle('active', mode === 'local');
+
+    document.querySelectorAll('.checkmark-utc').forEach(el => el.classList.toggle('d-none', mode !== 'utc'));
+    document.querySelectorAll('.checkmark-local').forEach(el => el.classList.toggle('d-none', mode !== 'local'));
+
+    updateTimestamps();
+}
+
+function formatTimestamp(rawStr, mode) {
+    if (!rawStr) return '';
+    let str = String(rawStr).trim();
+    if (!str) return '';
+
+    let date;
+    if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(str)) {
+        date = new Date(str.replace(' ', 'T') + 'Z');
+    } else if (str.endsWith(' UTC')) {
+        date = new Date(str.slice(0, -4).replace(' ', 'T') + 'Z');
+    } else {
+        date = new Date(str);
+    }
+
+    if (isNaN(date.getTime())) return rawStr;
+
+    const pad = (n) => String(n).padStart(2, '0');
+    if (mode === 'local') {
+        const year = date.getFullYear();
+        const month = pad(date.getMonth() + 1);
+        const day = pad(date.getDate());
+        const hours = pad(date.getHours());
+        const mins = pad(date.getMinutes());
+        const secs = pad(date.getSeconds());
+        return `${year}-${month}-${day} ${hours}:${mins}:${secs}`;
+    } else {
+        const year = date.getUTCFullYear();
+        const month = pad(date.getUTCMonth() + 1);
+        const day = pad(date.getUTCDate());
+        const hours = pad(date.getUTCHours());
+        const mins = pad(date.getUTCMinutes());
+        const secs = pad(date.getUTCSeconds());
+        return `${year}-${month}-${day} ${hours}:${mins}:${secs} UTC`;
+    }
+}
+
+function updateTimestamps() {
+    const mode = getTimeDisplayMode();
+    document.querySelectorAll('.app-timestamp').forEach(el => {
+        const raw = el.getAttribute('data-utc');
+        if (raw) {
+            el.textContent = formatTimestamp(raw, mode);
+        }
+    });
+
+    if (window.statusChartInstance && window.rawChartHistory) {
+        window.statusChartInstance.data.labels = window.rawChartHistory.map(item => formatTimestamp(item.timestamp, mode));
+        window.statusChartInstance.update();
+    }
+}
+
 document.addEventListener("DOMContentLoaded", function() {
-    // 1. Initial Theme Application
+    // 1. Initial Theme & Time Display Application
     updateTheme();
+
+    const storedTimeMode = localStorage.getItem('time_display');
+    if (storedTimeMode && (storedTimeMode === 'utc' || storedTimeMode === 'local')) {
+        setTimeDisplayMode(storedTimeMode);
+    } else {
+        updateTimestamps();
+    }
 
     // Listen for OS theme changes if in system mode
     window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function() {
