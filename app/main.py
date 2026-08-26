@@ -632,13 +632,16 @@ async def monitor_check_now(request: Request, monitor_id: int):
         m_row = cursor.fetchone()
         if not m_row:
             raise HTTPException(status_code=404, detail="Monitor not found")
-
+    m_id = int(m_row["id"])
     result = await check_monitor(dict(m_row), is_manual=True)
-    status_msg = "UP" if result["is_up"] else "DOWN"
 
     # Redirect back to referring page or monitor detail
-    referer = request.headers.get("referer")
-    clean_target = resolve_internal_redirect(referer, default=f"/monitors/{monitor_id}")
+    referer = str(request.headers.get("referer", ""))
+    clean_target = (
+        f"/monitors/{m_id}"
+        if f"/monitors/{m_id}" in referer
+        else ("/" if referer.endswith("/") else f"/monitors/{m_id}")
+    )
     redirect_query = (
         "msg=Check+completed:+UP&type=success"
         if result["is_up"]
@@ -655,24 +658,26 @@ async def monitor_sync_receipt_post(request: Request, monitor_id: int):
     """Synchronizes active Pushover emergency alert receipt status with Pushover API."""
     check_access(request, require_write=False)
     status_res = await sync_monitor_receipt_status(monitor_id)
-    referer = request.headers.get("referer")
-    clean_referer = resolve_internal_redirect(
-        referer, default=f"/monitors/{monitor_id}"
+    m_id = int(monitor_id)
+    referer = str(request.headers.get("referer", ""))
+    clean_referer = (
+        f"/monitors/{m_id}"
+        if f"/monitors/{m_id}" in referer
+        else ("/" if referer.endswith("/") else f"/monitors/{m_id}")
     )
 
     if status_res:
         if status_res.get("acknowledged"):
-            msg = "Receipt+synchronized:+Acknowledged"
-            msg_type = "success"
+            query_str = "msg=Receipt+synchronized:+Acknowledged&type=success"
         else:
-            msg = "Receipt+synchronized:+Still+pending+acknowledgment"
-            msg_type = "warning"
+            query_str = (
+                "msg=Receipt+synchronized:+Still+pending+acknowledgment&type=warning"
+            )
     else:
-        msg = "No+active+receipt+found+or+Pushover+query+failed"
-        msg_type = "info"
+        query_str = "msg=No+active+receipt+found+or+Pushover+query+failed&type=info"
 
     return RedirectResponse(
-        url=f"{clean_referer}?msg={msg}&type={msg_type}",
+        url=f"{clean_referer}?{query_str}",
         status_code=status.HTTP_303_SEE_OTHER,
     )
 
