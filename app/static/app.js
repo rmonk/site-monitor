@@ -18,7 +18,11 @@ function updateTheme() {
 // Time Display Mode (UTC / Local) Handling
 
 function getTimeDisplayMode() {
-    return localStorage.getItem('time_display') || document.documentElement.getAttribute('data-time-display') || 'utc';
+    let mode = null;
+    try {
+        mode = localStorage.getItem('time_display');
+    } catch (e) {}
+    return (mode === 'utc' || mode === 'local') ? mode : (document.documentElement.getAttribute('data-time-display') || 'utc');
 }
 
 function setTimeDisplayMode(mode) {
@@ -118,17 +122,7 @@ document.addEventListener("click", function(e) {
 document.addEventListener("DOMContentLoaded", function() {
     // 1. Initial Theme & Time Display Application
     updateTheme();
-
-    let storedTimeMode = null;
-    try {
-        storedTimeMode = localStorage.getItem('time_display');
-    } catch (e) {}
-
-    if (storedTimeMode && (storedTimeMode === 'utc' || storedTimeMode === 'local')) {
-        setTimeDisplayMode(storedTimeMode);
-    } else {
-        updateTimestamps();
-    }
+    setTimeDisplayMode(getTimeDisplayMode());
 
     // Listen for OS theme changes if in system mode
     window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function() {
