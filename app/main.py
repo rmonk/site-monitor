@@ -16,23 +16,34 @@ from fastapi.templating import Jinja2Templates
 logger = logging.getLogger("site_monitor.web")
 
 
-def safe_redirect_url(url: Optional[str], default: str = "/") -> str:
-    """Validates and sanitizes a target redirect URL to ensure it is a safe relative path."""
-    if not url:
-        return default
-    clean = str(url).strip()
-    try:
-        parsed = urllib.parse.urlparse(clean)
-        if parsed.scheme or parsed.netloc:
-            clean = parsed.path
-            if parsed.query:
-                clean += f"?{parsed.query}"
-    except Exception:
+def resolve_internal_redirect(referer: Optional[str], default: str = "/") -> str:
+    """
+    Resolves an incoming referer header to a strictly validated internal application path.
+    Guarantees no user-supplied string flows to RedirectResponse.
+    """
+    if not referer:
         return default
 
-    if clean.startswith("/") and not clean.startswith("//") and "\\" not in clean:
-        return clean
+    clean = str(referer).strip()
+    if "/settings" in clean:
+        return "/settings"
+    if "/monitors/new" in clean:
+        return "/monitors/new"
+
+    match = re.search(r"/monitors/(\d+)", clean)
+    if match:
+        monitor_id = int(match.group(1))
+        return f"/monitors/{monitor_id}"
+
+    if clean.endswith("/") or "/?" in clean or "/login" in clean:
+        return "/"
+
     return default
+
+
+def safe_redirect_url(url: Optional[str], default: str = "/") -> str:
+    """Validates and sanitizes a target redirect URL to ensure it is a safe relative path."""
+    return resolve_internal_redirect(url, default=default)
 
 
 from app.config import BASE_DIR, HOST, PORT
@@ -333,17 +344,16 @@ async def dashboard(request: Request):
 @app.get("/screenshots/{filename}")
 async def serve_screenshot(filename: str):
     """Serves captured monitor screenshot PNG images securely without path injection."""
-    if not re.match(r"^monitor_\d+_(success|failed)\.png$", filename):
+    match = re.match(r"^monitor_(\d+)_(success|failed)\.png$", filename)
+    if not match:
         raise HTTPException(status_code=400, detail="Invalid filename")
 
-    screenshots_dir = get_screenshots_dir().resolve()
-    filepath = (screenshots_dir / filename).resolve()
-    if filepath.parent != screenshots_dir or not filepath.is_relative_to(
-        screenshots_dir
-    ):
-        raise HTTPException(status_code=400, detail="Invalid path")
+    monitor_id = int(match.group(1))
+    status_suffix = "success" if match.group(2) == "success" else "failed"
+    safe_name = f"monitor_{monitor_id}_{status_suffix}.png"
 
-    if not filepath.exists() or not filepath.is_file():
+    filepath = get_screenshots_dir() / safe_name
+    if not filepath.is_file():
         raise HTTPException(status_code=404, detail="Screenshot not found")
 
     return FileResponse(filepath, media_type="image/png")
@@ -630,7 +640,7 @@ async def monitor_check_now(request: Request, monitor_id: int):
 
     # Redirect back to referring page or monitor detail
     referer = request.headers.get("referer")
-    clean_target = safe_redirect_url(referer, f"/monitors/{monitor_id}").split("?")[0]
+    clean_target = resolve_internal_redirect(referer, default=f"/monitors/{monitor_id}")
     msg_type = "success" if result["is_up"] else "danger"
     return RedirectResponse(
         url=f"{clean_target}?msg=Check+completed:+{status_msg}&type={msg_type}",
@@ -644,7 +654,9 @@ async def monitor_sync_receipt_post(request: Request, monitor_id: int):
     check_access(request, require_write=False)
     status_res = await sync_monitor_receipt_status(monitor_id)
     referer = request.headers.get("referer")
-    clean_referer = safe_redirect_url(referer, f"/monitors/{monitor_id}").split("?")[0]
+    clean_referer = resolve_internal_redirect(
+        referer, default=f"/monitors/{monitor_id}"
+    )
 
     if status_res:
         if status_res.get("acknowledged"):
@@ -768,7 +780,7 @@ async def settings_theme_post(request: Request):
     target_url = "/settings?msg=Theme+settings+updated&type=success"
     if "quick_toggle" in form_data:
         referer = request.headers.get("referer")
-        safe_ref = safe_redirect_url(referer, "/settings").split("?")[0]
+        safe_ref = resolve_internal_redirect(referer, default="/settings")
         target_url = f"{safe_ref}?msg=Theme+updated&type=success"
 
     return RedirectResponse(url=target_url, status_code=status.HTTP_303_SEE_OTHER)
@@ -778,15 +790,15 @@ async def settings_theme_post(request: Request):
 async def settings_time_display_post(request: Request):
     """Sets the per-user time display preference cookie and redirects back."""
     form_data = await request.form()
-    time_display = str(form_data.get("time_display", "utc")).strip().lower()
-    if time_display not in ("utc", "local"):
-        time_display = "utc"
+    raw_mode = str(form_data.get("time_display", "")).strip().lower()
+    selected_mode = "local" if raw_mode == "local" else "utc"
+
     referer = request.headers.get("referer")
-    safe_target = safe_redirect_url(referer, "/")
+    safe_target = resolve_internal_redirect(referer, default="/")
     response = RedirectResponse(url=safe_target, status_code=status.HTTP_303_SEE_OTHER)
     response.set_cookie(
         key="time_display",
-        value=time_display,
+        value=selected_mode,
         max_age=31536000,
         samesite="lax",
     )

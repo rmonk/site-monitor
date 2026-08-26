@@ -607,16 +607,20 @@ def test_time_display_settings_and_preferences():
 
 def test_security_sanitization():
     """Verifies open redirect prevention, path injection protection, and safe error handling."""
-    from app.main import safe_redirect_url
+    from app.main import resolve_internal_redirect
 
-    # 1. Test safe_redirect_url validator against open redirect vectors
-    assert safe_redirect_url("/dashboard") == "/dashboard"
-    assert safe_redirect_url("/monitors/1?msg=test") == "/monitors/1?msg=test"
-    assert safe_redirect_url("https://attacker.com/evil", default="/") == "/evil"
-    assert safe_redirect_url("https://attacker.com", default="/default") == "/default"
-    assert safe_redirect_url("//attacker.com", default="/fallback") == "/fallback"
-    assert safe_redirect_url(r"/\attacker.com", default="/fallback") == "/fallback"
-    assert safe_redirect_url(None, default="/") == "/"
+    # 1. Test resolve_internal_redirect validator against open redirect vectors
+    assert resolve_internal_redirect("/settings") == "/settings"
+    assert resolve_internal_redirect("/monitors/1") == "/monitors/1"
+    assert resolve_internal_redirect("/monitors/42?msg=test") == "/monitors/42"
+    assert resolve_internal_redirect("https://attacker.com/evil", default="/") == "/"
+    assert (
+        resolve_internal_redirect("https://attacker.com", default="/default")
+        == "/default"
+    )
+    assert resolve_internal_redirect("//attacker.com", default="/") == "/"
+    assert resolve_internal_redirect(r"/\attacker.com", default="/") == "/"
+    assert resolve_internal_redirect(None, default="/") == "/"
 
     # 2. Test screenshot path traversal protections
     res_traversal = client.get("/screenshots/../../etc/passwd")
