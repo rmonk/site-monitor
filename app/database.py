@@ -168,6 +168,7 @@ def init_db():
             "theme_custom_bg": "#f8f9fa",
             "theme_custom_card": "#ffffff",
             "theme_custom_text": "#212529",
+            "default_time_display": "utc",
             "heartbeat_ping_url": "",
             "heartbeat_ping_interval_minutes": "15",
         }

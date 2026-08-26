@@ -103,6 +103,19 @@ def get_template_context(
     theme_custom_card = get_setting("theme_custom_card", "#ffffff")
     theme_custom_text = get_setting("theme_custom_text", "#212529")
 
+    # Time display resolution:
+    # 1. User cookie override ("time_display")
+    # 2. Service default setting ("default_time_display", fallback "utc")
+    user_time_display = request.cookies.get("time_display", "").strip().lower()
+    default_time_display = get_setting("default_time_display", "utc").strip().lower()
+    if default_time_display not in ("utc", "local"):
+        default_time_display = "utc"
+    active_time_display = (
+        user_time_display
+        if user_time_display in ("utc", "local")
+        else default_time_display
+    )
+
     # Query param messages
     if not msg and "msg" in request.query_params:
         msg = request.query_params.get("msg")
@@ -122,6 +135,8 @@ def get_template_context(
         "theme_custom_bg": theme_custom_bg,
         "theme_custom_card": theme_custom_card,
         "theme_custom_text": theme_custom_text,
+        "time_display": active_time_display,
+        "default_time_display": default_time_display,
     }
 
 
@@ -658,6 +673,7 @@ async def settings_auth_post(request: Request):
 
 @app.post("/settings/theme")
 async def settings_theme_post(request: Request):
+    """Updates service theme, colors, and default timestamp display settings."""
     check_access(request, require_write=True)
     form_data = await request.form()
     theme_mode = str(form_data.get("theme_mode", "light")).strip()
@@ -666,6 +682,9 @@ async def settings_theme_post(request: Request):
     theme_custom_bg = str(form_data.get("theme_custom_bg", "#f8f9fa")).strip()
     theme_custom_card = str(form_data.get("theme_custom_card", "#ffffff")).strip()
     theme_custom_text = str(form_data.get("theme_custom_text", "#212529")).strip()
+    default_time_display = (
+        str(form_data.get("default_time_display", "")).strip().lower()
+    )
 
     if theme_mode in ("light", "dark", "system"):
         set_setting("theme_mode", theme_mode)
@@ -679,6 +698,9 @@ async def settings_theme_post(request: Request):
         "custom",
     ):
         set_setting("theme_color_preset", theme_color_preset)
+
+    if default_time_display in ("utc", "local"):
+        set_setting("default_time_display", default_time_display)
 
     if theme_custom_primary.startswith("#") and len(theme_custom_primary) in (4, 7):
         set_setting("theme_custom_primary", theme_custom_primary)
@@ -696,6 +718,24 @@ async def settings_theme_post(request: Request):
         target_url = f"{referer}?msg=Theme+updated&type=success"
 
     return RedirectResponse(url=target_url, status_code=status.HTTP_303_SEE_OTHER)
+
+
+@app.post("/settings/time-display")
+async def settings_time_display_post(request: Request):
+    """Sets the per-user time display preference cookie and redirects back."""
+    form_data = await request.form()
+    time_display = str(form_data.get("time_display", "utc")).strip().lower()
+    if time_display not in ("utc", "local"):
+        time_display = "utc"
+    referer = request.headers.get("referer") or "/"
+    response = RedirectResponse(url=referer, status_code=status.HTTP_303_SEE_OTHER)
+    response.set_cookie(
+        key="time_display",
+        value=time_display,
+        max_age=31536000,
+        samesite="lax",
+    )
+    return response
 
 
 @app.post("/settings/alerts-default")
