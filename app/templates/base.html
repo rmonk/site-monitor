@@ -10,7 +10,8 @@
     <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
     <!-- Chart.js -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
-    <link rel="stylesheet" href="/static/style.css">
+    <link rel="stylesheet" href="/static/style.css?v=1.2.0">
+    <script src="/static/app.js?v=1.2.0" defer></script>
 </head>
 <body class="bg-body-tertiary">
 
@@ -109,13 +110,13 @@
                         </button>
                         <ul class="dropdown-menu dropdown-menu-end shadow-sm">
                             <li>
-                                <button type="button" class="dropdown-item d-flex align-items-center justify-content-between time-option-utc {% if time_display == 'utc' or not time_display %}active{% endif %}" onclick="setTimeDisplayMode('utc')">
+                                <button type="button" class="dropdown-item d-flex align-items-center justify-content-between time-option-utc {% if time_display == 'utc' or not time_display %}active{% endif %}" data-time-mode="utc" onclick="if (window.setTimeDisplayMode) { window.setTimeDisplayMode('utc'); }">
                                     <span><i class="bi bi-globe me-2 text-primary"></i> UTC</span>
                                     <i class="bi bi-check2 ms-2 checkmark-utc {% if time_display == 'local' %}d-none{% endif %}"></i>
                                 </button>
                             </li>
                             <li>
-                                <button type="button" class="dropdown-item d-flex align-items-center justify-content-between time-option-local {% if time_display == 'local' %}active{% endif %}" onclick="setTimeDisplayMode('local')">
+                                <button type="button" class="dropdown-item d-flex align-items-center justify-content-between time-option-local {% if time_display == 'local' %}active{% endif %}" data-time-mode="local" onclick="if (window.setTimeDisplayMode) { window.setTimeDisplayMode('local'); }">
                                     <span><i class="bi bi-geo-alt me-2 text-success"></i> Local Time</span>
                                     <i class="bi bi-check2 ms-2 checkmark-local {% if time_display != 'local' %}d-none{% endif %}"></i>
                                 </button>
@@ -159,7 +160,6 @@
 
     <!-- Bootstrap 5 JS Bundle -->
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
-    <script src="/static/app.js"></script>
     {% block scripts %}{% endblock %}
 </body>
 </html>
