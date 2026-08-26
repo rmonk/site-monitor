@@ -1,5 +1,8 @@
 import asyncio
+import logging
+import re
 import time
+import urllib.parse
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -9,6 +12,28 @@ from fastapi import FastAPI, Request, Response, HTTPException, status, Depends
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+
+logger = logging.getLogger("site_monitor.web")
+
+
+def safe_redirect_url(url: Optional[str], default: str = "/") -> str:
+    """Validates and sanitizes a target redirect URL to ensure it is a safe relative path."""
+    if not url:
+        return default
+    clean = str(url).strip()
+    try:
+        parsed = urllib.parse.urlparse(clean)
+        if parsed.scheme or parsed.netloc:
+            clean = parsed.path
+            if parsed.query:
+                clean += f"?{parsed.query}"
+    except Exception:
+        return default
+
+    if clean.startswith("/") and not clean.startswith("//") and "\\" not in clean:
+        return clean
+    return default
+
 
 from app.config import BASE_DIR, HOST, PORT
 from app.database import (
@@ -50,6 +75,7 @@ from fastapi.responses import FileResponse
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    """Manages application startup background loops and graceful shutdown teardown."""
     # Startup logic
     init_db()
     task_holder: Dict[str, Any] = {}
@@ -77,6 +103,7 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
 def hex_to_rgb(hex_str: str) -> str:
+    """Converts a hex color code to an RGB comma-separated string for CSS styling."""
     hex_str = hex_str.lstrip("#")
     if len(hex_str) == 6:
         try:
@@ -92,6 +119,7 @@ def hex_to_rgb(hex_str: str) -> str:
 def get_template_context(
     request: Request, active_page: str = "", msg: str = "", msg_type: str = "info"
 ) -> dict:
+    """Builds standard template context with theme, auth state, and time preferences."""
     user = get_current_user(request)
     auth_mode = get_setting("auth_mode", "readonly_public")
 
@@ -159,9 +187,14 @@ async def healthz():
             active_monitors_count = row["count"] if row else 0
             db_ok = True
     except Exception as e:
+        logger.error(f"Health check database failure: {e}")
         return JSONResponse(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            content={"status": "unhealthy", "database": False, "error": str(e)},
+            content={
+                "status": "unhealthy",
+                "database": False,
+                "error": "Database connectivity failure",
+            },
         )
 
     heartbeat = get_worker_heartbeat()
@@ -299,12 +332,18 @@ async def dashboard(request: Request):
 
 @app.get("/screenshots/{filename}")
 async def serve_screenshot(filename: str):
-    """Serves captured monitor screenshot PNG images."""
-    if ".." in filename or "/" in filename or "\\" in filename:
+    """Serves captured monitor screenshot PNG images securely without path injection."""
+    if not re.match(r"^monitor_\d+_(success|failed)\.png$", filename):
         raise HTTPException(status_code=400, detail="Invalid filename")
 
-    filepath = get_screenshots_dir() / filename
-    if not filepath.exists():
+    screenshots_dir = get_screenshots_dir().resolve()
+    filepath = (screenshots_dir / filename).resolve()
+    if filepath.parent != screenshots_dir or not filepath.is_relative_to(
+        screenshots_dir
+    ):
+        raise HTTPException(status_code=400, detail="Invalid path")
+
+    if not filepath.exists() or not filepath.is_file():
         raise HTTPException(status_code=404, detail="Screenshot not found")
 
     return FileResponse(filepath, media_type="image/png")
@@ -312,6 +351,7 @@ async def serve_screenshot(filename: str):
 
 @app.get("/login", response_class=HTMLResponse)
 async def login_page(request: Request):
+    """Renders the admin login form or redirects authenticated users to dashboard."""
     if is_authenticated(request):
         return RedirectResponse(url="/", status_code=status.HTTP_303_SEE_OTHER)
     ctx = get_template_context(request, active_page="login")
@@ -320,6 +360,7 @@ async def login_page(request: Request):
 
 @app.post("/login")
 async def login_post(request: Request):
+    """Processes login authentication and sets session cookie upon success."""
     form_data = await request.form()
     username = str(form_data.get("username", "")).strip()
     password = str(form_data.get("password", ""))
@@ -351,6 +392,7 @@ async def login_post(request: Request):
 
 @app.get("/logout")
 async def logout(request: Request):
+    """Logs out the active user and clears their session cookie."""
     token = request.cookies.get("session_token")
     if token:
         remove_session(token)
@@ -364,6 +406,7 @@ async def logout(request: Request):
 
 @app.get("/monitors/new", response_class=HTMLResponse)
 async def monitor_new_page(request: Request):
+    """Renders the create monitor form."""
     check_access(request, require_write=True)
     ctx = get_template_context(request, active_page="monitors_new")
     ctx["monitor"] = None
@@ -372,6 +415,7 @@ async def monitor_new_page(request: Request):
 
 @app.post("/monitors/new")
 async def monitor_new_post(request: Request):
+    """Processes new monitor creation and stores record in database."""
     check_access(request, require_write=True)
     form_data = await request.form()
 
@@ -484,6 +528,7 @@ async def monitor_detail(request: Request, monitor_id: int):
 
 @app.get("/monitors/{monitor_id}/edit", response_class=HTMLResponse)
 async def monitor_edit_page(request: Request, monitor_id: int):
+    """Renders the monitor configuration edit form."""
     check_access(request, require_write=True)
     with get_db() as conn:
         cursor = conn.cursor()
@@ -499,6 +544,7 @@ async def monitor_edit_page(request: Request, monitor_id: int):
 
 @app.post("/monitors/{monitor_id}/edit")
 async def monitor_edit_post(request: Request, monitor_id: int):
+    """Updates an existing monitor's configuration parameters."""
     check_access(request, require_write=True)
     form_data = await request.form()
 
@@ -555,6 +601,7 @@ async def monitor_edit_post(request: Request, monitor_id: int):
 
 @app.post("/monitors/{monitor_id}/delete")
 async def monitor_delete(request: Request, monitor_id: int):
+    """Deletes a monitor and associated alert state and check histories."""
     check_access(request, require_write=True)
     with get_db() as conn:
         cursor = conn.cursor()
@@ -567,6 +614,7 @@ async def monitor_delete(request: Request, monitor_id: int):
 
 @app.post("/monitors/{monitor_id}/check")
 async def monitor_check_now(request: Request, monitor_id: int):
+    """Triggers an on-demand manual health check for a monitor."""
     check_access(request, require_write=True)
     with get_db() as conn:
         cursor = conn.cursor()
@@ -581,20 +629,22 @@ async def monitor_check_now(request: Request, monitor_id: int):
     )
 
     # Redirect back to referring page or monitor detail
-    referer = request.headers.get("referer", f"/monitors/{monitor_id}")
+    referer = request.headers.get("referer")
+    clean_target = safe_redirect_url(referer, f"/monitors/{monitor_id}").split("?")[0]
     msg_type = "success" if result["is_up"] else "danger"
     return RedirectResponse(
-        url=f"{referer}?msg=Check+completed:+{status_msg}&type={msg_type}",
+        url=f"{clean_target}?msg=Check+completed:+{status_msg}&type={msg_type}",
         status_code=status.HTTP_303_SEE_OTHER,
     )
 
 
 @app.post("/monitors/{monitor_id}/sync-receipt")
 async def monitor_sync_receipt_post(request: Request, monitor_id: int):
+    """Synchronizes active Pushover emergency alert receipt status with Pushover API."""
     check_access(request, require_write=False)
     status_res = await sync_monitor_receipt_status(monitor_id)
-    referer = request.headers.get("referer", f"/monitors/{monitor_id}")
-    clean_referer = referer.split("?")[0]
+    referer = request.headers.get("referer")
+    clean_referer = safe_redirect_url(referer, f"/monitors/{monitor_id}").split("?")[0]
 
     if status_res:
         if status_res.get("acknowledged"):
@@ -617,6 +667,7 @@ async def monitor_sync_receipt_post(request: Request, monitor_id: int):
 
 @app.get("/api/monitors/{monitor_id}/receipt")
 async def monitor_receipt_api(request: Request, monitor_id: int):
+    """Returns Pushover alert receipt acknowledgment status JSON."""
     status_res = await sync_monitor_receipt_status(monitor_id)
     with get_db() as conn:
         cursor = conn.cursor()
@@ -651,6 +702,7 @@ async def monitor_receipt_api(request: Request, monitor_id: int):
 
 @app.get("/settings", response_class=HTMLResponse)
 async def settings_page(request: Request):
+    """Renders the system settings management page."""
     check_access(request, require_write=True)
     all_settings = get_all_settings()
     ctx = get_template_context(request, active_page="settings")
@@ -660,6 +712,7 @@ async def settings_page(request: Request):
 
 @app.post("/settings/auth")
 async def settings_auth_post(request: Request):
+    """Updates the web interface authentication and access control mode."""
     check_access(request, require_write=True)
     form_data = await request.form()
     auth_mode = str(form_data.get("auth_mode", "readonly_public"))
@@ -712,10 +765,11 @@ async def settings_theme_post(request: Request):
         set_setting("theme_custom_text", theme_custom_text)
 
     # If request came from quick toggle, redirect to referer if present
-    referer = request.headers.get("referer")
     target_url = "/settings?msg=Theme+settings+updated&type=success"
-    if "quick_toggle" in form_data and referer:
-        target_url = f"{referer}?msg=Theme+updated&type=success"
+    if "quick_toggle" in form_data:
+        referer = request.headers.get("referer")
+        safe_ref = safe_redirect_url(referer, "/settings").split("?")[0]
+        target_url = f"{safe_ref}?msg=Theme+updated&type=success"
 
     return RedirectResponse(url=target_url, status_code=status.HTTP_303_SEE_OTHER)
 
@@ -727,8 +781,9 @@ async def settings_time_display_post(request: Request):
     time_display = str(form_data.get("time_display", "utc")).strip().lower()
     if time_display not in ("utc", "local"):
         time_display = "utc"
-    referer = request.headers.get("referer") or "/"
-    response = RedirectResponse(url=referer, status_code=status.HTTP_303_SEE_OTHER)
+    referer = request.headers.get("referer")
+    safe_target = safe_redirect_url(referer, "/")
+    response = RedirectResponse(url=safe_target, status_code=status.HTTP_303_SEE_OTHER)
     response.set_cookie(
         key="time_display",
         value=time_display,
@@ -740,6 +795,7 @@ async def settings_time_display_post(request: Request):
 
 @app.post("/settings/alerts-default")
 async def settings_alerts_default_post(request: Request):
+    """Updates default alert repeating and screenshot capture global settings."""
     check_access(request, require_write=True)
     form_data = await request.form()
     default_repeat = (
@@ -764,6 +820,7 @@ async def settings_alerts_default_post(request: Request):
 
 @app.post("/settings/heartbeat")
 async def settings_heartbeat_post(request: Request):
+    """Updates Dead Man's Switch external watchdog heartbeat ping configuration."""
     check_access(request, require_write=True)
     form_data = await request.form()
     ping_url = str(form_data.get("heartbeat_ping_url", "")).strip()
@@ -780,6 +837,7 @@ async def settings_heartbeat_post(request: Request):
 
 @app.post("/settings/pushover")
 async def settings_pushover_post(request: Request):
+    """Updates Pushover API credentials, emergency retry, and priority settings."""
     check_access(request, require_write=True)
     form_data = await request.form()
     enabled = "true" if form_data.get("pushover_enabled") == "true" else "false"
@@ -804,6 +862,7 @@ async def settings_pushover_post(request: Request):
 
 @app.post("/settings/pushover/test/normal")
 async def settings_pushover_test_normal_post(request: Request):
+    """Dispatches a normal priority test alert through Pushover."""
     check_access(request, require_write=True)
     success, msg = await send_normal_test_alert()
     msg_type = "success" if success else "danger"
@@ -815,6 +874,7 @@ async def settings_pushover_test_normal_post(request: Request):
 
 @app.post("/settings/pushover/test/alert")
 async def settings_pushover_test_alert_post(request: Request):
+    """Dispatches an emergency priority test alert through Pushover with receipt tracking."""
     check_access(request, require_write=True)
     success, msg, receipt = await send_down_test_alert()
     msg_type = "success" if success else "danger"
@@ -826,6 +886,7 @@ async def settings_pushover_test_alert_post(request: Request):
 
 @app.post("/settings/pushover/test/recovery")
 async def settings_pushover_test_recovery_post(request: Request):
+    """Dispatches a recovery test alert and cancels any prior test emergency receipts."""
     check_access(request, require_write=True)
     success, msg, cancelled_receipt = await send_recovery_test_alert()
     msg_type = "success" if success else "danger"
@@ -837,11 +898,13 @@ async def settings_pushover_test_recovery_post(request: Request):
 
 @app.post("/settings/pushover/test")
 async def settings_pushover_test_post(request: Request):
+    """Backwards-compatible test alert dispatcher."""
     return await settings_pushover_test_normal_post(request)
 
 
 @app.post("/settings/password")
 async def settings_password_post(request: Request):
+    """Updates the administrator user password."""
     username = check_access(request, require_write=True)
     form_data = await request.form()
     old_password = str(form_data.get("old_password", ""))

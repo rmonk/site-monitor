@@ -605,6 +605,27 @@ def test_time_display_settings_and_preferences():
     assert get_setting("default_time_display") == "utc"
 
 
+def test_security_sanitization():
+    """Verifies open redirect prevention, path injection protection, and safe error handling."""
+    from app.main import safe_redirect_url
+
+    # 1. Test safe_redirect_url validator against open redirect vectors
+    assert safe_redirect_url("/dashboard") == "/dashboard"
+    assert safe_redirect_url("/monitors/1?msg=test") == "/monitors/1?msg=test"
+    assert safe_redirect_url("https://attacker.com/evil", default="/") == "/evil"
+    assert safe_redirect_url("https://attacker.com", default="/default") == "/default"
+    assert safe_redirect_url("//attacker.com", default="/fallback") == "/fallback"
+    assert safe_redirect_url(r"/\attacker.com", default="/fallback") == "/fallback"
+    assert safe_redirect_url(None, default="/") == "/"
+
+    # 2. Test screenshot path traversal protections
+    res_traversal = client.get("/screenshots/../../etc/passwd")
+    assert res_traversal.status_code in (400, 404)
+
+    res_invalid_name = client.get("/screenshots/arbitrary_file.txt")
+    assert res_invalid_name.status_code == 400
+
+
 if __name__ == "__main__":
     setup_module(None)
     test_initial_setup()
@@ -622,4 +643,5 @@ if __name__ == "__main__":
     test_api_status_endpoint()
     test_monitor_detail_screenshots_visibility()
     test_time_display_settings_and_preferences()
+    test_security_sanitization()
     print("ALL test_app.py tests passed successfully!")
