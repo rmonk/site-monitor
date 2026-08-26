@@ -4,6 +4,10 @@ on:
   push:
     branches:
       - main
+  pull_request:
+    branches:
+      - main
+    types: [opened, synchronize, reopened]
   workflow_dispatch:
 
 env:
@@ -14,6 +18,8 @@ env:
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
+    # Only run for pushes to main or PRs originating from this same repository (not external forks)
+    if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)
     permissions:
       contents: read
       packages: write
@@ -35,7 +41,8 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+            type=raw,value=latest,enable=${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+            type=raw,value=${{ github.head_ref }},enable=${{ github.event_name == 'pull_request' }}
             type=sha,prefix=,format=short
 
       - name: Set up Docker Buildx

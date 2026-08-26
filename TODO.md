@@ -131,6 +131,14 @@
   - [x] Added unit and integration tests verifying settings, cookie overrides, and template rendering
   - [x] Formatted Python code with `black`
 
+- [x] **17. Build & Publish Container Images on Pull Requests to Main**
+  - [x] Created dedicated branch `build-pr-containers` based on `main`
+  - [x] Updated `.github/workflows/docker-publish.yml` to trigger on `pull_request` (`opened`, `synchronize`, `reopened`) targeting `main`
+  - [x] Tag container images with the source branch name (`github.head_ref`) for pull requests from this repository
+  - [x] Retained `latest` tag generation for pushes directly to `main`
+  - [x] Ensured new commits to PR branches (`synchronize`) trigger container builds
+
+
 
 
 
