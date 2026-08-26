@@ -634,9 +634,7 @@ async def monitor_check_now(request: Request, monitor_id: int):
             raise HTTPException(status_code=404, detail="Monitor not found")
 
     result = await check_monitor(dict(m_row), is_manual=True)
-    status_msg = (
-        "UP" if result["is_up"] else f"DOWN ({result['error_message'] or 'Failed'})"
-    )
+    status_msg = "UP" if result["is_up"] else "DOWN"
 
     # Redirect back to referring page or monitor detail
     referer = request.headers.get("referer")
@@ -660,9 +658,7 @@ async def monitor_sync_receipt_post(request: Request, monitor_id: int):
 
     if status_res:
         if status_res.get("acknowledged"):
-            device = status_res.get("acknowledged_by_device") or "user device"
-            user = status_res.get("acknowledged_by") or "user"
-            msg = f"Receipt+synchronized:+Acknowledged+on+{device}+(User:+{user})"
+            msg = "Receipt+synchronized:+Acknowledged"
             msg_type = "success"
         else:
             msg = "Receipt+synchronized:+Still+pending+acknowledgment"
