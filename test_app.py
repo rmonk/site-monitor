@@ -477,6 +477,59 @@ def test_api_status_endpoint():
     assert isinstance(data["monitors"], list)
 
 
+def test_monitor_detail_screenshots_visibility():
+    login_res = client.post(
+        "/login",
+        data={"username": "testadmin", "password": "testsecret123"},
+        follow_redirects=False,
+    )
+    session_token = login_res.cookies["session_token"]
+
+    # 1. Create a monitor with screenshots explicitly DISABLED (capture_screenshots=0)
+    client.post(
+        "/monitors/new",
+        data={
+            "name": "No Screenshot Monitor",
+            "url": "https://example-noscreen.com",
+            "check_interval": "60",
+            "timeout": "10",
+            "failure_threshold": "1",
+            "capture_screenshots": "0",
+        },
+        cookies={"session_token": session_token},
+        follow_redirects=False,
+    )
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT id FROM monitors WHERE name = 'No Screenshot Monitor'")
+        m_id = cursor.fetchone()["id"]
+
+    res = client.get(f"/monitors/{m_id}")
+    assert res.status_code == 200
+    assert "Request Screenshots" not in res.text
+
+    # 2. Update monitor to explicitly ENABLE screenshots (capture_screenshots=1)
+    client.post(
+        f"/monitors/{m_id}/edit",
+        data={
+            "name": "No Screenshot Monitor",
+            "url": "https://example-noscreen.com",
+            "check_interval": "60",
+            "timeout": "10",
+            "failure_threshold": "1",
+            "capture_screenshots": "1",
+            "is_active": "1",
+        },
+        cookies={"session_token": session_token},
+        follow_redirects=False,
+    )
+
+    res_enabled = client.get(f"/monitors/{m_id}")
+    assert res_enabled.status_code == 200
+    assert "Request Screenshots" in res_enabled.text
+
+
 if __name__ == "__main__":
     setup_module(None)
     test_initial_setup()
@@ -491,4 +544,5 @@ if __name__ == "__main__":
     test_pushover_test_suite_routes()
     test_receipt_sync_and_api_routes()
     test_api_status_endpoint()
+    test_monitor_detail_screenshots_visibility()
     print("ALL test_app.py tests passed successfully!")

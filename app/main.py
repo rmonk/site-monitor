@@ -440,6 +440,11 @@ async def monitor_detail(request: Request, monitor_id: int):
     default_repeat_interval = get_setting("default_repeat_interval_minutes", "60")
     default_capture_screenshots = get_setting_bool("default_capture_screenshots", True)
 
+    if m_row["capture_screenshots"] is not None:
+        screenshots_enabled = bool(m_row["capture_screenshots"])
+    else:
+        screenshots_enabled = default_capture_screenshots
+
     a_dict = dict(a_state) if a_state else None
     if a_dict:
         a_dict["receipt_acknowledged_at_formatted"] = format_utc_timestamp(
@@ -455,6 +460,7 @@ async def monitor_detail(request: Request, monitor_id: int):
             "default_repeat_alerts": default_repeat,
             "default_repeat_interval": default_repeat_interval,
             "default_capture_screenshots": default_capture_screenshots,
+            "screenshots_enabled": screenshots_enabled,
         }
     )
     return templates.TemplateResponse(request, "monitor_detail.html", ctx)
