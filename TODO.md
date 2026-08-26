@@ -114,6 +114,15 @@
   - [x] Add comprehensive unit and integration tests covering optimizations
   - [x] Commit to `devel`, merge to `main`, and push to remote `origin`
 
+- [x] **15. Hide Screenshots Section in Detail View When Disabled**
+  - [x] Created dedicated branch `hide-disabled-screenshots`
+  - [x] Calculate `screenshots_enabled` in `monitor_detail` route in `app/main.py` based on per-monitor setting or global default
+  - [x] Wrap Screenshots card in `{% if screenshots_enabled %}` in `app/templates/monitor_detail.html`
+  - [x] Add automated unit tests in `test_app.py` verifying screenshot section visibility when enabled vs disabled
+  - [x] Format Python code with `black`
+  - [x] Commit and push branch `hide-disabled-screenshots` to remote `origin`
+
+
 
 
 

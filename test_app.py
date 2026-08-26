@@ -20,6 +20,7 @@ client = TestClient(app)
 
 
 def setup_module(module):
+    """Initializes the temporary test database environment."""
     test_dir = Path("/tmp/site_monitor_test_data")
     if test_dir.exists():
         shutil.rmtree(test_dir)
@@ -28,6 +29,7 @@ def setup_module(module):
 
 
 def test_initial_setup():
+    """Verifies default database settings and initial admin user creation."""
     assert get_setting("auth_mode") == "readonly_public"
     assert get_setting("default_capture_screenshots") == "true"
     assert get_setting("theme_mode") == "light"
@@ -40,12 +42,14 @@ def test_initial_setup():
 
 
 def test_public_dashboard_access():
+    """Verifies unauthenticated visitors can view public status dashboard."""
     response = client.get("/")
     assert response.status_code == 200
     assert "Site Monitor" in response.text
 
 
 def test_login_flow():
+    """Verifies authentication validation for valid and invalid credentials."""
     # Bad credentials
     res = client.post(
         "/login", data={"username": "testadmin", "password": "wrongpassword"}
@@ -64,6 +68,7 @@ def test_login_flow():
 
 
 def test_monitor_crud_operations():
+    """Verifies complete monitor lifecycle: creation, viewing, check, API and deletion."""
     # Login first
     login_res = client.post(
         "/login",
@@ -166,12 +171,14 @@ def test_monitor_crud_operations():
 
 
 def test_screenshot_route():
+    """Verifies that requesting a nonexistent screenshot returns 404."""
     # Test non-existent file
     res_404 = client.get("/screenshots/nonexistent.png")
     assert res_404.status_code == 404
 
 
 def test_screenshot_settings():
+    """Verifies updating global screenshot defaults and monitor screenshot override settings."""
     login_res = client.post(
         "/login",
         data={"username": "testadmin", "password": "testsecret123"},
@@ -232,6 +239,7 @@ def test_screenshot_settings():
 
 
 def test_theme_settings():
+    """Verifies theme customization, presets, and HTML dataset attribute rendering."""
     login_res = client.post(
         "/login",
         data={"username": "testadmin", "password": "testsecret123"},
@@ -293,6 +301,7 @@ def test_theme_settings():
 
 
 def test_require_login_mode():
+    """Verifies that require_login mode blocks anonymous dashboard access."""
     login_res = client.post(
         "/login",
         data={"username": "testadmin", "password": "testsecret123"},
@@ -316,6 +325,7 @@ def test_require_login_mode():
 
 
 def test_healthz_endpoint():
+    """Verifies the health check /healthz endpoint returns healthy diagnostics."""
     # 1. Healthz endpoint should return 200 and healthy status
     res = client.get("/healthz")
     assert res.status_code == 200
@@ -327,6 +337,7 @@ def test_healthz_endpoint():
 
 
 def test_heartbeat_settings():
+    """Verifies Dead Man's Switch external heartbeat settings update."""
     login_res = client.post(
         "/login",
         data={"username": "testadmin", "password": "testsecret123"},
@@ -351,6 +362,7 @@ def test_heartbeat_settings():
 
 
 def test_pushover_test_suite_routes():
+    """Verifies Pushover configuration and the 3-action test suite endpoints."""
     login_res = client.post(
         "/login",
         data={"username": "testadmin", "password": "testsecret123"},
@@ -417,6 +429,7 @@ def test_pushover_test_suite_routes():
 
 
 def test_receipt_sync_and_api_routes():
+    """Verifies manual receipt synchronization endpoint and receipt status JSON API."""
     login_res = client.post(
         "/login",
         data={"username": "testadmin", "password": "testsecret123"},
@@ -469,12 +482,67 @@ def test_receipt_sync_and_api_routes():
 
 
 def test_api_status_endpoint():
+    """Verifies the /api/status endpoint returns valid JSON monitoring status summary."""
     api_res = client.get("/api/status")
     assert api_res.status_code == 200
     data = api_res.json()
     assert data["status"] == "ok"
     assert "monitors" in data
     assert isinstance(data["monitors"], list)
+
+
+def test_monitor_detail_screenshots_visibility():
+    """Verifies that the Request Screenshots section is omitted when screenshots are disabled."""
+    login_res = client.post(
+        "/login",
+        data={"username": "testadmin", "password": "testsecret123"},
+        follow_redirects=False,
+    )
+    session_token = login_res.cookies["session_token"]
+
+    # 1. Create a monitor with screenshots explicitly DISABLED (capture_screenshots=0)
+    client.post(
+        "/monitors/new",
+        data={
+            "name": "No Screenshot Monitor",
+            "url": "https://example-noscreen.com",
+            "check_interval": "60",
+            "timeout": "10",
+            "failure_threshold": "1",
+            "capture_screenshots": "0",
+        },
+        cookies={"session_token": session_token},
+        follow_redirects=False,
+    )
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT id FROM monitors WHERE name = 'No Screenshot Monitor'")
+        m_id = cursor.fetchone()["id"]
+
+    res = client.get(f"/monitors/{m_id}")
+    assert res.status_code == 200
+    assert "Request Screenshots" not in res.text
+
+    # 2. Update monitor to explicitly ENABLE screenshots (capture_screenshots=1)
+    client.post(
+        f"/monitors/{m_id}/edit",
+        data={
+            "name": "No Screenshot Monitor",
+            "url": "https://example-noscreen.com",
+            "check_interval": "60",
+            "timeout": "10",
+            "failure_threshold": "1",
+            "capture_screenshots": "1",
+            "is_active": "1",
+        },
+        cookies={"session_token": session_token},
+        follow_redirects=False,
+    )
+
+    res_enabled = client.get(f"/monitors/{m_id}")
+    assert res_enabled.status_code == 200
+    assert "Request Screenshots" in res_enabled.text
 
 
 if __name__ == "__main__":
@@ -491,4 +559,5 @@ if __name__ == "__main__":
     test_pushover_test_suite_routes()
     test_receipt_sync_and_api_routes()
     test_api_status_endpoint()
+    test_monitor_detail_screenshots_visibility()
     print("ALL test_app.py tests passed successfully!")
