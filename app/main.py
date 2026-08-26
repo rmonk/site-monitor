@@ -639,9 +639,13 @@ async def monitor_check_now(request: Request, monitor_id: int):
     # Redirect back to referring page or monitor detail
     referer = request.headers.get("referer")
     clean_target = resolve_internal_redirect(referer, default=f"/monitors/{monitor_id}")
-    msg_type = "success" if result["is_up"] else "danger"
+    redirect_query = (
+        "msg=Check+completed:+UP&type=success"
+        if result["is_up"]
+        else "msg=Check+completed:+DOWN&type=danger"
+    )
     return RedirectResponse(
-        url=f"{clean_target}?msg=Check+completed:+{status_msg}&type={msg_type}",
+        url=f"{clean_target}?{redirect_query}",
         status_code=status.HTTP_303_SEE_OTHER,
     )
 
