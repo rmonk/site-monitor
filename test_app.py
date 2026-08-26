@@ -20,6 +20,7 @@ client = TestClient(app)
 
 
 def setup_module(module):
+    """Initializes the temporary test database environment."""
     test_dir = Path("/tmp/site_monitor_test_data")
     if test_dir.exists():
         shutil.rmtree(test_dir)
@@ -28,6 +29,7 @@ def setup_module(module):
 
 
 def test_initial_setup():
+    """Verifies default database settings and initial admin user creation."""
     assert get_setting("auth_mode") == "readonly_public"
     assert get_setting("default_capture_screenshots") == "true"
     assert get_setting("theme_mode") == "light"
@@ -40,12 +42,14 @@ def test_initial_setup():
 
 
 def test_public_dashboard_access():
+    """Verifies unauthenticated visitors can view public status dashboard."""
     response = client.get("/")
     assert response.status_code == 200
     assert "Site Monitor" in response.text
 
 
 def test_login_flow():
+    """Verifies authentication validation for valid and invalid credentials."""
     # Bad credentials
     res = client.post(
         "/login", data={"username": "testadmin", "password": "wrongpassword"}
@@ -64,6 +68,7 @@ def test_login_flow():
 
 
 def test_monitor_crud_operations():
+    """Verifies complete monitor lifecycle: creation, viewing, check, API and deletion."""
     # Login first
     login_res = client.post(
         "/login",
@@ -166,12 +171,14 @@ def test_monitor_crud_operations():
 
 
 def test_screenshot_route():
+    """Verifies that requesting a nonexistent screenshot returns 404."""
     # Test non-existent file
     res_404 = client.get("/screenshots/nonexistent.png")
     assert res_404.status_code == 404
 
 
 def test_screenshot_settings():
+    """Verifies updating global screenshot defaults and monitor screenshot override settings."""
     login_res = client.post(
         "/login",
         data={"username": "testadmin", "password": "testsecret123"},
@@ -232,6 +239,7 @@ def test_screenshot_settings():
 
 
 def test_theme_settings():
+    """Verifies theme customization, presets, and HTML dataset attribute rendering."""
     login_res = client.post(
         "/login",
         data={"username": "testadmin", "password": "testsecret123"},
@@ -293,6 +301,7 @@ def test_theme_settings():
 
 
 def test_require_login_mode():
+    """Verifies that require_login mode blocks anonymous dashboard access."""
     login_res = client.post(
         "/login",
         data={"username": "testadmin", "password": "testsecret123"},
@@ -316,6 +325,7 @@ def test_require_login_mode():
 
 
 def test_healthz_endpoint():
+    """Verifies the health check /healthz endpoint returns healthy diagnostics."""
     # 1. Healthz endpoint should return 200 and healthy status
     res = client.get("/healthz")
     assert res.status_code == 200
@@ -327,6 +337,7 @@ def test_healthz_endpoint():
 
 
 def test_heartbeat_settings():
+    """Verifies Dead Man's Switch external heartbeat settings update."""
     login_res = client.post(
         "/login",
         data={"username": "testadmin", "password": "testsecret123"},
@@ -351,6 +362,7 @@ def test_heartbeat_settings():
 
 
 def test_pushover_test_suite_routes():
+    """Verifies Pushover configuration and the 3-action test suite endpoints."""
     login_res = client.post(
         "/login",
         data={"username": "testadmin", "password": "testsecret123"},
@@ -417,6 +429,7 @@ def test_pushover_test_suite_routes():
 
 
 def test_receipt_sync_and_api_routes():
+    """Verifies manual receipt synchronization endpoint and receipt status JSON API."""
     login_res = client.post(
         "/login",
         data={"username": "testadmin", "password": "testsecret123"},
@@ -469,6 +482,7 @@ def test_receipt_sync_and_api_routes():
 
 
 def test_api_status_endpoint():
+    """Verifies the /api/status endpoint returns valid JSON monitoring status summary."""
     api_res = client.get("/api/status")
     assert api_res.status_code == 200
     data = api_res.json()
@@ -478,6 +492,7 @@ def test_api_status_endpoint():
 
 
 def test_monitor_detail_screenshots_visibility():
+    """Verifies that the Request Screenshots section is omitted when screenshots are disabled."""
     login_res = client.post(
         "/login",
         data={"username": "testadmin", "password": "testsecret123"},

@@ -409,6 +409,7 @@ async def monitor_new_post(request: Request):
 
 @app.get("/monitors/{monitor_id}", response_class=HTMLResponse)
 async def monitor_detail(request: Request, monitor_id: int):
+    """Renders the detailed status, response time graph, screenshots, and check history for a monitor."""
     auth_mode = get_setting("auth_mode", "readonly_public")
     user = get_current_user(request)
 
