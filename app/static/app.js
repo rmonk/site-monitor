@@ -23,7 +23,9 @@ function getTimeDisplayMode() {
 
 function setTimeDisplayMode(mode) {
     if (mode !== 'utc' && mode !== 'local') return;
-    localStorage.setItem('time_display', mode);
+    try {
+        localStorage.setItem('time_display', mode);
+    } catch (e) {}
     document.cookie = `time_display=${mode}; path=/; max-age=31536000; SameSite=Lax`;
     document.documentElement.setAttribute('data-time-display', mode);
 
@@ -94,11 +96,34 @@ function updateTimestamps() {
     }
 }
 
+// Explicitly bind to global window object
+window.getSystemTheme = getSystemTheme;
+window.updateTheme = updateTheme;
+window.getTimeDisplayMode = getTimeDisplayMode;
+window.setTimeDisplayMode = setTimeDisplayMode;
+window.formatTimestamp = formatTimestamp;
+window.updateTimestamps = updateTimestamps;
+
+// Attach click listener immediately for timezone buttons (delegated)
+document.addEventListener("click", function(e) {
+    const timeBtn = e.target.closest("[data-time-mode]");
+    if (timeBtn) {
+        const mode = timeBtn.getAttribute("data-time-mode");
+        if (mode === 'utc' || mode === 'local') {
+            setTimeDisplayMode(mode);
+        }
+    }
+});
+
 document.addEventListener("DOMContentLoaded", function() {
     // 1. Initial Theme & Time Display Application
     updateTheme();
 
-    const storedTimeMode = localStorage.getItem('time_display');
+    let storedTimeMode = null;
+    try {
+        storedTimeMode = localStorage.getItem('time_display');
+    } catch (e) {}
+
     if (storedTimeMode && (storedTimeMode === 'utc' || storedTimeMode === 'local')) {
         setTimeDisplayMode(storedTimeMode);
     } else {
