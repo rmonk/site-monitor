@@ -748,7 +748,18 @@ def test_passkey_auth_and_management():
     )
     assert bad_verify.status_code == 400
 
-    # 8. Test Passkey deletion
+    # 8. Test Secure Cookie generation on HTTPS requests
+    https_login = client.post(
+        "/login",
+        data={"username": "testadmin", "password": "testsecret123"},
+        headers={"X-Forwarded-Proto": "https"},
+        follow_redirects=False,
+    )
+    assert https_login.status_code == 303
+    set_cookie_header = https_login.headers.get("set-cookie", "")
+    assert "session_token=" in set_cookie_header
+
+    # 9. Test Passkey deletion
     del_res = client.post(
         f"/settings/passkeys/{pk_id}/delete",
         cookies={"session_token": session_token},

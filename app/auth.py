@@ -33,6 +33,10 @@ logger = logging.getLogger("site_monitor.auth")
 SESSION_STORE: Dict[str, str] = {}
 
 # In-memory WebAuthn challenge store: challenge_id -> { challenge: bytes, user_id: Optional[int], created_at: float }
+# Note: Like SESSION_STORE, CHALLENGE_STORE is process-local and requires a single worker
+# for registration and sign-in ceremonies to remain valid across requests and server restarts.
+# If multi-worker scaling or restart resilience is required in the future, challenge storage
+# should be backed by SQLite or a shared cache store.
 CHALLENGE_STORE: Dict[str, Dict[str, Any]] = {}
 CHALLENGE_TTL_SECONDS = 300  # 5 minutes
 
@@ -68,37 +72,70 @@ def pop_challenge(challenge_id: str) -> Optional[Dict[str, Any]]:
 
 
 def get_rp_id(request: Request) -> str:
-    """Extracts the Relying Party ID (hostname) from request headers or environment."""
+    """Extracts and validates the Relying Party ID (hostname).
+
+    WEBAUTHN_RP_ID is authoritative if configured. For non-configured hosts,
+    the request host is validated against ALLOWED_HOSTS/WEBAUTHN_ALLOWED_HOSTS
+    or permitted localhost development origins.
+    """
     custom_rp_id = os.environ.get("WEBAUTHN_RP_ID")
     if custom_rp_id:
         return custom_rp_id.strip()
-    host_header = (
+
+    raw_host = (
         request.headers.get("x-forwarded-host")
         or request.headers.get("host")
         or request.url.hostname
         or "localhost"
     )
-    # Strip port if present
-    return host_header.split(":")[0].strip()
+    host = raw_host.split(":")[0].strip().lower()
+
+    allowed_env = os.environ.get("ALLOWED_HOSTS") or os.environ.get(
+        "WEBAUTHN_ALLOWED_HOSTS"
+    )
+    allowed_hosts = (
+        {h.strip().lower() for h in allowed_env.split(",") if h.strip()}
+        if allowed_env
+        else set()
+    )
+    # Allow standard local development and test hostnames by default
+    allowed_hosts.update({"localhost", "127.0.0.1", "::1", "testserver"})
+
+    if allowed_env and host not in allowed_hosts:
+        logger.warning(
+            f"Rejected WebAuthn ceremony with unallowed request host: '{host}'"
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Untrusted host for WebAuthn ceremony.",
+        )
+
+    return host
 
 
 def get_origin(request: Request) -> str:
-    """Extracts the full origin (scheme://host[:port]) from request headers or environment."""
+    """Extracts and validates the full origin (scheme://host[:port]).
+
+    WEBAUTHN_ORIGIN is authoritative if configured. Otherwise, constructs the
+    origin from the validated RP ID and proxy/request scheme.
+    """
     custom_origin = os.environ.get("WEBAUTHN_ORIGIN")
     if custom_origin:
         return custom_origin.rstrip("/")
+
+    rp_id = get_rp_id(request)
     proto = request.headers.get("x-forwarded-proto") or request.url.scheme or "http"
-    host = (
-        request.headers.get("x-forwarded-host")
-        or request.headers.get("host")
-        or (
-            f"{request.url.hostname}:{request.url.port}"
-            if request.url.port
-            else request.url.hostname
-        )
-        or "localhost"
-    )
-    return f"{proto}://{host}".rstrip("/")
+    if proto not in ("http", "https"):
+        proto = "https"
+
+    port = request.url.port
+    if (
+        port
+        and port not in (80, 443)
+        and rp_id in ("localhost", "127.0.0.1", "testserver")
+    ):
+        return f"{proto}://{rp_id}:{port}"
+    return f"{proto}://{rp_id}"
 
 
 def generate_passkey_registration_options(
@@ -114,8 +151,10 @@ def generate_passkey_registration_options(
         try:
             cred_id_bytes = base64url_to_bytes(pk["credential_id"])
             exclude_credentials.append(PublicKeyCredentialDescriptor(id=cred_id_bytes))
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning(
+                f"Skipping malformed credential ID '{pk.get('credential_id')}': {exc}"
+            )
 
     user_handle = str(user_id).encode("utf-8")
     options = webauthn.generate_registration_options(
@@ -193,8 +232,10 @@ def generate_passkey_authentication_options(
                     allow_credentials.append(
                         PublicKeyCredentialDescriptor(id=cred_id_bytes)
                     )
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.warning(
+                        f"Skipping malformed credential ID '{pk.get('credential_id')}': {exc}"
+                    )
 
     options = webauthn.generate_authentication_options(
         rp_id=rp_id,

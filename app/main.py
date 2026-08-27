@@ -396,8 +396,17 @@ async def login_post(request: Request):
             url="/?msg=Successfully+logged+in&type=success",
             status_code=status.HTTP_303_SEE_OTHER,
         )
+        is_secure = (
+            request.headers.get("x-forwarded-proto", "").lower() == "https"
+            or request.url.scheme == "https"
+        )
         response.set_cookie(
-            key="session_token", value=session_token, httponly=True, max_age=86400 * 30
+            key="session_token",
+            value=session_token,
+            httponly=True,
+            secure=is_secure,
+            max_age=86400 * 30,
+            samesite="lax",
         )
         return response
 
@@ -499,10 +508,15 @@ async def passkey_login_verify(request: Request):
             "redirect_url": "/?msg=Successfully+logged+in+with+passkey&type=success",
         }
     )
+    is_secure = (
+        request.headers.get("x-forwarded-proto", "").lower() == "https"
+        or request.url.scheme == "https"
+    )
     response.set_cookie(
         key="session_token",
         value=session_token,
         httponly=True,
+        secure=is_secure,
         max_age=86400 * 30,
         samesite="lax",
     )
@@ -1126,18 +1140,29 @@ async def passkey_register_verify(request: Request):
             status_code=400,
             content={
                 "success": False,
-                "detail": f"Passkey registration failed: {str(exc)}",
+                "detail": "Passkey registration verification failed. Please try again.",
             },
         )
 
-    save_passkey(
-        user_id=user_row["id"],
-        credential_id=verified_data["credential_id"],
-        public_key=verified_data["public_key"],
-        sign_count=verified_data["sign_count"],
-        name=passkey_name,
-        aaguid=verified_data.get("aaguid"),
-    )
+    import sqlite3
+
+    try:
+        save_passkey(
+            user_id=user_row["id"],
+            credential_id=verified_data["credential_id"],
+            public_key=verified_data["public_key"],
+            sign_count=verified_data["sign_count"],
+            name=passkey_name,
+            aaguid=verified_data.get("aaguid"),
+        )
+    except sqlite3.IntegrityError:
+        return JSONResponse(
+            status_code=400,
+            content={
+                "success": False,
+                "detail": "This passkey has already been registered.",
+            },
+        )
 
     return JSONResponse(
         content={
