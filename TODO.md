@@ -150,6 +150,17 @@
   - [x] Added comprehensive automated tests in `test_app.py`
   - [x] Formatted Python code with `black`
 
+- [x] **19. Historical Uptime Calculation, Time Window Selector & Individual Monitor Uptime Column**
+  - [x] Created dedicated branch `uptime-filter-and-stats` based on `origin/main`
+  - [x] Investigated and resolved the root cause of the overall uptime card displaying 100% (was measuring instantaneous operational count instead of historical checks)
+  - [x] Added `get_uptime_statistics(period)` and `canonicalize_period` in `app/database.py` calculating overall and per-monitor check success rates over time windows
+  - [x] Added time window selector (`1 Hour`, `1 Day`, `1 Week`, `1 Month`, `All Time`) on dashboard with active state highlighting and cookie preference persistence
+  - [x] Added dedicated "Uptime (%)" column with color-coded health badges in the "Monitored Websites" dashboard table
+  - [x] Updated `/api/status` endpoint to support period queries and include individual monitor uptime metrics
+  - [x] Added automated unit and integration tests in `test_app.py`
+  - [x] Formatted Python code with `black`
+
+
 
 
 
