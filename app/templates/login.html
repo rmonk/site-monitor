@@ -13,12 +13,28 @@
                     <p class="text-body-secondary small">Sign in to manage site monitoring</p>
                 </div>
 
+                <div id="passkeyLoginAlert" class="alert alert-danger d-none mb-3" role="alert"></div>
+
+                <div class="mb-4">
+                    <button type="button" class="btn btn-outline-primary w-100 py-2 fw-semibold d-flex align-items-center justify-content-center gap-2 shadow-sm" id="passkeyLoginBtn" onclick="loginWithPasskey()">
+                        <i class="bi bi-fingerprint fs-5"></i>
+                        <span>Sign in with Passkey</span>
+                    </button>
+                </div>
+
+                <div class="position-relative text-center my-4">
+                    <hr class="text-muted">
+                    <span class="position-absolute top-50 start-50 translate-middle px-3 bg-body text-body-secondary small fw-medium">
+                        or sign in with password
+                    </span>
+                </div>
+
                 <form action="/login" method="post">
                     <div class="mb-3">
                         <label for="username" class="form-label fw-semibold">Username</label>
                         <div class="input-group">
                             <span class="input-group-text"><i class="bi bi-person"></i></span>
-                            <input type="text" class="form-control" id="username" name="username" required autofocus>
+                            <input type="text" class="form-control" id="username" name="username" autocomplete="username webauthn" required autofocus>
                         </div>
                     </div>
 
@@ -26,7 +42,7 @@
                         <label for="password" class="form-label fw-semibold">Password</label>
                         <div class="input-group">
                             <span class="input-group-text"><i class="bi bi-lock"></i></span>
-                            <input type="password" class="form-control" id="password" name="password" required>
+                            <input type="password" class="form-control" id="password" name="password" autocomplete="current-password" required>
                         </div>
                     </div>
 

@@ -352,6 +352,80 @@
             </div>
         </div>
 
+        <!-- Passkeys & Biometrics -->
+        <div class="card border-0 shadow-sm mb-4">
+            <div class="card-header bg-body py-3 d-flex align-items-center justify-content-between">
+                <h5 class="mb-0 fw-bold"><i class="bi bi-fingerprint me-2 text-primary"></i>Passkeys & Biometrics</h5>
+                <button type="button" class="btn btn-sm btn-primary" onclick="initiatePasskeyRegistration()">
+                    <i class="bi bi-plus-lg me-1"></i> Add Passkey
+                </button>
+            </div>
+            <div class="card-body p-4">
+                <p class="text-body-secondary small mb-3">
+                    Passkeys allow fast and secure biometric or hardware key sign-in (such as Touch ID, Face ID, Windows Hello, or YubiKeys) without entering your password.
+                </p>
+
+                <div id="passkeyRegisterAlert" class="alert alert-danger d-none mb-3" role="alert"></div>
+
+                {% if passkeys and passkeys|length > 0 %}
+                <div class="table-responsive">
+                    <table class="table table-hover align-middle mb-0">
+                        <thead class="table-light">
+                            <tr>
+                                <th>Name / Device</th>
+                                <th>Added</th>
+                                <th>Last Used</th>
+                                <th class="text-end">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for pk in passkeys %}
+                            <tr>
+                                <td>
+                                    <div class="d-flex align-items-center gap-2">
+                                        <div class="bg-primary-subtle text-primary p-2 rounded-circle d-flex align-items-center justify-content-center" style="width: 34px; height: 34px;">
+                                            <i class="bi bi-key-fill"></i>
+                                        </div>
+                                        <div>
+                                            <div class="fw-semibold">{{ pk.name }}</div>
+                                            <div class="text-body-secondary font-monospace" style="font-size: 0.75rem;">ID: {{ pk.credential_id[:16] }}...</div>
+                                        </div>
+                                    </div>
+                                </td>
+                                <td>
+                                    <span class="app-timestamp small text-body-secondary" data-utc="{{ pk.created_at }}">{{ pk.created_at }}</span>
+                                </td>
+                                <td>
+                                    {% if pk.last_used_at %}
+                                        <span class="app-timestamp small text-body-secondary" data-utc="{{ pk.last_used_at }}">{{ pk.last_used_at }}</span>
+                                    {% else %}
+                                        <span class="badge text-bg-secondary fw-normal">Never</span>
+                                    {% endif %}
+                                </td>
+                                <td class="text-end">
+                                    <form action="/settings/passkeys/{{ pk.id }}/delete" method="post" class="d-inline" onsubmit="return confirm('Are you sure you want to delete this passkey?');">
+                                        <button type="submit" class="btn btn-outline-danger btn-sm" title="Delete Passkey">
+                                            <i class="bi bi-trash"></i>
+                                        </button>
+                                    </form>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <div class="p-3 border rounded text-center bg-body-tertiary">
+                    <i class="bi bi-shield-slash text-body-tertiary display-6 mb-2"></i>
+                    <p class="text-body-secondary small mb-2">No passkeys registered yet.</p>
+                    <button type="button" class="btn btn-sm btn-outline-primary" onclick="initiatePasskeyRegistration()">
+                        <i class="bi bi-plus-circle me-1"></i> Register Your First Passkey
+                    </button>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+
         <!-- Change Password -->
         <div class="card border-0 shadow-sm mb-4">
             <div class="card-header bg-body py-3">

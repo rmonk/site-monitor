@@ -24,7 +24,11 @@ def resolve_internal_redirect(referer: Optional[str], default: str = "/") -> str
     if not referer:
         return default
 
-    clean = str(referer).strip()
+    clean = str(referer).strip().replace("\\", "")
+    parsed = urllib.parse.urlparse(clean)
+    if parsed.netloc or parsed.scheme:
+        return default
+
     if "/settings" in clean:
         return "/settings"
     if "/monitors/new" in clean:
@@ -43,7 +47,18 @@ def resolve_internal_redirect(referer: Optional[str], default: str = "/") -> str
 
 def safe_redirect_url(url: Optional[str], default: str = "/") -> str:
     """Validates and sanitizes a target redirect URL to ensure it is a safe relative path."""
-    return resolve_internal_redirect(url, default=default)
+    if not url:
+        return default
+    clean = str(url).strip().replace("\\", "")
+    parsed = urllib.parse.urlparse(clean)
+    if (
+        parsed.netloc
+        or parsed.scheme
+        or not clean.startswith("/")
+        or clean.startswith("//")
+    ):
+        return default
+    return clean
 
 
 from app.config import BASE_DIR, HOST, PORT
@@ -56,6 +71,10 @@ from app.database import (
     get_setting_bool,
     get_setting_int,
     format_utc_timestamp,
+    get_user_by_username,
+    get_user_passkeys,
+    save_passkey,
+    delete_passkey,
 )
 from app.auth import (
     hash_password,
@@ -65,6 +84,12 @@ from app.auth import (
     get_current_user,
     is_authenticated,
     check_access,
+    get_rp_id,
+    get_origin,
+    generate_passkey_registration_options,
+    verify_passkey_registration,
+    generate_passkey_authentication_options,
+    verify_passkey_authentication,
 )
 from app.alerts import (
     send_test_alert,
@@ -386,8 +411,17 @@ async def login_post(request: Request):
             url="/?msg=Successfully+logged+in&type=success",
             status_code=status.HTTP_303_SEE_OTHER,
         )
+        is_secure = (
+            request.headers.get("x-forwarded-proto", "").lower() == "https"
+            or request.url.scheme == "https"
+        )
         response.set_cookie(
-            key="session_token", value=session_token, httponly=True, max_age=86400 * 30
+            key="session_token",
+            value=session_token,
+            httponly=True,
+            secure=is_secure,
+            max_age=86400 * 30,
+            samesite="lax",
         )
         return response
 
@@ -411,6 +445,96 @@ async def logout(request: Request):
         status_code=status.HTTP_303_SEE_OTHER,
     )
     response.delete_cookie(key="session_token")
+    return response
+
+
+@app.post("/api/auth/passkey/options")
+async def passkey_login_options(request: Request):
+    """Generates WebAuthn authentication options for passkey sign-in."""
+    try:
+        data = (
+            await request.json()
+            if "application/json" in request.headers.get("content-type", "")
+            else {}
+        )
+    except Exception:
+        data = {}
+    username = data.get("username") if isinstance(data, dict) else None
+    rp_id = get_rp_id(request)
+    options_json, challenge_id = generate_passkey_authentication_options(
+        rp_id=rp_id, username=username
+    )
+    import json
+
+    return JSONResponse(
+        content={
+            "options": json.loads(options_json),
+            "challenge_id": challenge_id,
+        }
+    )
+
+
+@app.post("/api/auth/passkey/verify")
+async def passkey_login_verify(request: Request):
+    """Verifies a WebAuthn assertion and authenticates the user."""
+    try:
+        data = await request.json()
+    except Exception:
+        return JSONResponse(
+            status_code=400,
+            content={"success": False, "detail": "Invalid JSON payload."},
+        )
+
+    credential_response = data.get("response")
+    challenge_id = data.get("challenge_id")
+
+    if not credential_response or not challenge_id:
+        return JSONResponse(
+            status_code=400,
+            content={
+                "success": False,
+                "detail": "Missing challenge or credential response.",
+            },
+        )
+
+    rp_id = get_rp_id(request)
+    origin = get_origin(request)
+
+    success, username, error_msg = verify_passkey_authentication(
+        authentication_json=credential_response,
+        challenge_id=challenge_id,
+        rp_id=rp_id,
+        origin=origin,
+    )
+
+    if not success or not username:
+        return JSONResponse(
+            status_code=400,
+            content={
+                "success": False,
+                "detail": error_msg or "Passkey verification failed.",
+            },
+        )
+
+    session_token = create_session(username)
+    response = JSONResponse(
+        content={
+            "success": True,
+            "redirect_url": "/?msg=Successfully+logged+in+with+passkey&type=success",
+        }
+    )
+    is_secure = (
+        request.headers.get("x-forwarded-proto", "").lower() == "https"
+        or request.url.scheme == "https"
+    )
+    response.set_cookie(
+        key="session_token",
+        value=session_token,
+        httponly=True,
+        secure=is_secure,
+        max_age=86400 * 30,
+        samesite="lax",
+    )
     return response
 
 
@@ -603,8 +727,11 @@ async def monitor_edit_post(request: Request, monitor_id: int):
             ),
         )
 
+    m_id = int(monitor_id)
     return RedirectResponse(
-        url=f"/monitors/{monitor_id}?msg=Monitor+updated+successfully&type=success",
+        url=safe_redirect_url(
+            f"/monitors/{m_id}?msg=Monitor+updated+successfully&type=success"
+        ),
         status_code=status.HTTP_303_SEE_OTHER,
     )
 
@@ -648,7 +775,7 @@ async def monitor_check_now(request: Request, monitor_id: int):
         else "msg=Check+completed:+DOWN&type=danger"
     )
     return RedirectResponse(
-        url=f"{clean_target}?{redirect_query}",
+        url=safe_redirect_url(f"{clean_target}?{redirect_query}"),
         status_code=status.HTTP_303_SEE_OTHER,
     )
 
@@ -677,7 +804,7 @@ async def monitor_sync_receipt_post(request: Request, monitor_id: int):
         query_str = "msg=No+active+receipt+found+or+Pushover+query+failed&type=info"
 
     return RedirectResponse(
-        url=f"{clean_referer}?{query_str}",
+        url=safe_redirect_url(f"{clean_referer}?{query_str}"),
         status_code=status.HTTP_303_SEE_OTHER,
     )
 
@@ -720,10 +847,12 @@ async def monitor_receipt_api(request: Request, monitor_id: int):
 @app.get("/settings", response_class=HTMLResponse)
 async def settings_page(request: Request):
     """Renders the system settings management page."""
-    check_access(request, require_write=True)
+    username = check_access(request, require_write=True)
     all_settings = get_all_settings()
     ctx = get_template_context(request, active_page="settings")
     ctx["settings"] = all_settings
+    user_row = get_user_by_username(username) if username else None
+    ctx["passkeys"] = get_user_passkeys(user_row["id"]) if user_row else []
     return templates.TemplateResponse(request, "settings.html", ctx)
 
 
@@ -953,6 +1082,130 @@ async def settings_password_post(request: Request):
 
     return RedirectResponse(
         url="/settings?msg=Password+updated+successfully&type=success",
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
+
+
+@app.post("/api/passkeys/register/options")
+async def passkey_register_options(request: Request):
+    """Generates WebAuthn registration options for the authenticated user."""
+    username = check_access(request, require_write=True)
+    user_row = get_user_by_username(username)
+    if not user_row:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    rp_id = get_rp_id(request)
+    options_json, challenge_id = generate_passkey_registration_options(
+        user_id=user_row["id"],
+        username=user_row["username"],
+        rp_id=rp_id,
+        rp_name="Site Monitor",
+    )
+    import json
+
+    return JSONResponse(
+        content={
+            "options": json.loads(options_json),
+            "challenge_id": challenge_id,
+        }
+    )
+
+
+@app.post("/api/passkeys/register/verify")
+async def passkey_register_verify(request: Request):
+    """Verifies and registers a new passkey credential for the authenticated user."""
+    username = check_access(request, require_write=True)
+    user_row = get_user_by_username(username)
+    if not user_row:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    try:
+        data = await request.json()
+    except Exception:
+        return JSONResponse(
+            status_code=400,
+            content={"success": False, "detail": "Invalid JSON payload."},
+        )
+
+    credential_response = data.get("response")
+    challenge_id = data.get("challenge_id")
+    raw_name = str(data.get("name", "")).strip()
+    passkey_name = raw_name[:50] if raw_name else "Passkey"
+
+    if not credential_response or not challenge_id:
+        return JSONResponse(
+            status_code=400,
+            content={
+                "success": False,
+                "detail": "Missing challenge or credential response.",
+            },
+        )
+
+    rp_id = get_rp_id(request)
+    origin = get_origin(request)
+
+    try:
+        verified_data = verify_passkey_registration(
+            registration_json=credential_response,
+            challenge_id=challenge_id,
+            rp_id=rp_id,
+            origin=origin,
+            expected_user_id=user_row["id"],
+        )
+    except Exception as exc:
+        logger.warning(f"Passkey registration failed for user {username}: {exc}")
+        return JSONResponse(
+            status_code=400,
+            content={
+                "success": False,
+                "detail": "Passkey registration verification failed. Please try again.",
+            },
+        )
+
+    import sqlite3
+
+    try:
+        save_passkey(
+            user_id=user_row["id"],
+            credential_id=verified_data["credential_id"],
+            public_key=verified_data["public_key"],
+            sign_count=verified_data["sign_count"],
+            name=passkey_name,
+            aaguid=verified_data.get("aaguid"),
+        )
+    except sqlite3.IntegrityError:
+        return JSONResponse(
+            status_code=400,
+            content={
+                "success": False,
+                "detail": "This passkey has already been registered.",
+            },
+        )
+
+    return JSONResponse(
+        content={
+            "success": True,
+            "message": f"Passkey '{passkey_name}' registered successfully.",
+        }
+    )
+
+
+@app.post("/settings/passkeys/{passkey_id}/delete")
+async def passkey_delete_post(request: Request, passkey_id: int):
+    """Deletes a registered passkey for the authenticated user."""
+    username = check_access(request, require_write=True)
+    user_row = get_user_by_username(username)
+    if not user_row:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    deleted = delete_passkey(passkey_id=passkey_id, user_id=user_row["id"])
+    if deleted:
+        return RedirectResponse(
+            url="/settings?msg=Passkey+deleted+successfully&type=success",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+    return RedirectResponse(
+        url="/settings?msg=Passkey+not+found+or+permission+denied&type=danger",
         status_code=status.HTTP_303_SEE_OTHER,
     )
 

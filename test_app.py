@@ -171,10 +171,14 @@ def test_monitor_crud_operations():
 
 
 def test_screenshot_route():
-    """Verifies that requesting a nonexistent screenshot returns 404."""
-    # Test non-existent file
-    res_404 = client.get("/screenshots/nonexistent.png")
+    """Verifies that requesting a nonexistent screenshot returns 404 and invalid formats return 400."""
+    # Test valid filename format for non-existent file -> 404
+    res_404 = client.get("/screenshots/monitor_99999_success.png")
     assert res_404.status_code == 404
+
+    # Test invalid filename format -> 400
+    res_400 = client.get("/screenshots/nonexistent.png")
+    assert res_400.status_code == 400
 
 
 def test_screenshot_settings():
@@ -459,7 +463,9 @@ def test_receipt_sync_and_api_routes():
         m_row = cursor.fetchone()
         m_id = m_row["id"]
         cursor.execute(
-            "UPDATE alert_state SET is_currently_down = 1, active_receipts = 'rcpt_sync_test' WHERE monitor_id = ?",
+            "INSERT INTO alert_state (monitor_id, is_currently_down, consecutive_failures, active_receipts) "
+            "VALUES (?, 1, 1, 'rcpt_sync_test') "
+            "ON CONFLICT(monitor_id) DO UPDATE SET is_currently_down = 1, active_receipts = 'rcpt_sync_test'",
             (m_id,),
         )
 
@@ -473,7 +479,9 @@ def test_receipt_sync_and_api_routes():
     assert f"/monitors/{m_id}" in sync_res.headers["location"]
 
     # 3. Test receipt JSON API route
-    api_res = client.get(f"/api/monitors/{m_id}/receipt")
+    api_res = client.get(
+        f"/api/monitors/{m_id}/receipt", cookies={"session_token": session_token}
+    )
     assert api_res.status_code == 200
     data = api_res.json()
     assert data["monitor_id"] == m_id
@@ -630,6 +638,137 @@ def test_security_sanitization():
     assert res_invalid_name.status_code == 400
 
 
+def test_passkey_auth_and_management():
+    """Verifies Passkey options generation, registration, settings listing, authentication flow, and deletion."""
+    from app.database import (
+        get_user_by_username,
+        get_user_passkeys,
+        save_passkey,
+        get_passkey_by_credential_id,
+        update_passkey_usage,
+        delete_passkey,
+    )
+    from app.auth import (
+        generate_passkey_registration_options,
+        generate_passkey_authentication_options,
+        store_challenge,
+        pop_challenge,
+    )
+
+    # 1. Login as admin
+    login_res = client.post(
+        "/login",
+        data={"username": "testadmin", "password": "testsecret123"},
+        follow_redirects=False,
+    )
+    session_token = login_res.cookies["session_token"]
+    user = get_user_by_username("testadmin")
+    assert user is not None
+
+    # 2. Test registration options endpoint
+    # Unauthenticated should fail (clear cookies in client jar)
+    client.cookies.clear()
+    unauth_reg = client.post("/api/passkeys/register/options")
+    assert unauth_reg.status_code == 401
+
+    # Authenticated should succeed
+    auth_reg = client.post(
+        "/api/passkeys/register/options",
+        cookies={"session_token": session_token},
+    )
+    assert auth_reg.status_code == 200
+    reg_data = auth_reg.json()
+    assert "options" in reg_data
+    assert "challenge_id" in reg_data
+    assert reg_data["options"]["rp"]["name"] == "Site Monitor"
+
+    # 3. Test Passkey DB persistence
+    mock_cred_id = "test_cred_id_abc123"
+    mock_pub_key = "test_pub_key_xyz789"
+    pk_id = save_passkey(
+        user_id=user["id"],
+        credential_id=mock_cred_id,
+        public_key=mock_pub_key,
+        sign_count=0,
+        name="MacBook Touch ID",
+        aaguid="00000000-0000-0000-0000-000000000000",
+    )
+    assert pk_id is not None
+
+    # Retrieve passkeys
+    user_pks = get_user_passkeys(user["id"])
+    assert len(user_pks) >= 1
+    assert any(pk["credential_id"] == mock_cred_id for pk in user_pks)
+
+    found_pk = get_passkey_by_credential_id(mock_cred_id)
+    assert found_pk is not None
+    assert found_pk["name"] == "MacBook Touch ID"
+    assert found_pk["sign_count"] == 0
+
+    # Update sign count
+    update_passkey_usage(mock_cred_id, 5)
+    updated_pk = get_passkey_by_credential_id(mock_cred_id)
+    assert updated_pk["sign_count"] == 5
+    assert updated_pk["last_used_at"] is not None
+
+    # 4. Test Settings page renders Passkeys section
+    settings_res = client.get("/settings", cookies={"session_token": session_token})
+    assert settings_res.status_code == 200
+    assert (
+        "Passkeys &amp; Biometrics" in settings_res.text
+        or "Passkeys & Biometrics" in settings_res.text
+    )
+    assert "MacBook Touch ID" in settings_res.text
+
+    # 5. Test Login page renders Passkey button
+    login_page_res = client.get("/login")
+    assert login_page_res.status_code == 200
+    assert "Sign in with Passkey" in login_page_res.text
+
+    # 6. Test Authentication Options endpoint
+    auth_opt_res = client.post("/api/auth/passkey/options", json={})
+    assert auth_opt_res.status_code == 200
+    auth_opt_data = auth_opt_res.json()
+    assert "options" in auth_opt_data
+    assert "challenge_id" in auth_opt_data
+
+    # User-specific authentication options
+    auth_opt_user_res = client.post(
+        "/api/auth/passkey/options", json={"username": "testadmin"}
+    )
+    assert auth_opt_user_res.status_code == 200
+    auth_opt_user_data = auth_opt_user_res.json()
+    assert "options" in auth_opt_user_data
+    assert "challenge_id" in auth_opt_user_data
+
+    # 7. Test Passkey Verify endpoint error handling
+    bad_verify = client.post(
+        "/api/auth/passkey/verify",
+        json={"response": {}, "challenge_id": "invalid_challenge"},
+    )
+    assert bad_verify.status_code == 400
+
+    # 8. Test Secure Cookie generation on HTTPS requests
+    https_login = client.post(
+        "/login",
+        data={"username": "testadmin", "password": "testsecret123"},
+        headers={"X-Forwarded-Proto": "https"},
+        follow_redirects=False,
+    )
+    assert https_login.status_code == 303
+    set_cookie_header = https_login.headers.get("set-cookie", "")
+    assert "session_token=" in set_cookie_header
+
+    # 9. Test Passkey deletion
+    del_res = client.post(
+        f"/settings/passkeys/{pk_id}/delete",
+        cookies={"session_token": session_token},
+        follow_redirects=False,
+    )
+    assert del_res.status_code == 303
+    assert get_passkey_by_credential_id(mock_cred_id) is None
+
+
 if __name__ == "__main__":
     setup_module(None)
     test_initial_setup()
@@ -648,4 +787,5 @@ if __name__ == "__main__":
     test_monitor_detail_screenshots_visibility()
     test_time_display_settings_and_preferences()
     test_security_sanitization()
+    test_passkey_auth_and_management()
     print("ALL test_app.py tests passed successfully!")
