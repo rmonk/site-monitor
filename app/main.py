@@ -24,7 +24,11 @@ def resolve_internal_redirect(referer: Optional[str], default: str = "/") -> str
     if not referer:
         return default
 
-    clean = str(referer).strip()
+    clean = str(referer).strip().replace("\\", "")
+    parsed = urllib.parse.urlparse(clean)
+    if parsed.netloc or parsed.scheme:
+        return default
+
     if "/settings" in clean:
         return "/settings"
     if "/monitors/new" in clean:
@@ -43,7 +47,18 @@ def resolve_internal_redirect(referer: Optional[str], default: str = "/") -> str
 
 def safe_redirect_url(url: Optional[str], default: str = "/") -> str:
     """Validates and sanitizes a target redirect URL to ensure it is a safe relative path."""
-    return resolve_internal_redirect(url, default=default)
+    if not url:
+        return default
+    clean = str(url).strip().replace("\\", "")
+    parsed = urllib.parse.urlparse(clean)
+    if (
+        parsed.netloc
+        or parsed.scheme
+        or not clean.startswith("/")
+        or clean.startswith("//")
+    ):
+        return default
+    return clean
 
 
 from app.config import BASE_DIR, HOST, PORT
@@ -712,8 +727,11 @@ async def monitor_edit_post(request: Request, monitor_id: int):
             ),
         )
 
+    m_id = int(monitor_id)
     return RedirectResponse(
-        url=f"/monitors/{monitor_id}?msg=Monitor+updated+successfully&type=success",
+        url=safe_redirect_url(
+            f"/monitors/{m_id}?msg=Monitor+updated+successfully&type=success"
+        ),
         status_code=status.HTTP_303_SEE_OTHER,
     )
 
@@ -757,7 +775,7 @@ async def monitor_check_now(request: Request, monitor_id: int):
         else "msg=Check+completed:+DOWN&type=danger"
     )
     return RedirectResponse(
-        url=f"{clean_target}?{redirect_query}",
+        url=safe_redirect_url(f"{clean_target}?{redirect_query}"),
         status_code=status.HTTP_303_SEE_OTHER,
     )
 
@@ -786,7 +804,7 @@ async def monitor_sync_receipt_post(request: Request, monitor_id: int):
         query_str = "msg=No+active+receipt+found+or+Pushover+query+failed&type=info"
 
     return RedirectResponse(
-        url=f"{clean_referer}?{query_str}",
+        url=safe_redirect_url(f"{clean_referer}?{query_str}"),
         status_code=status.HTTP_303_SEE_OTHER,
     )
 
