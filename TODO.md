@@ -138,6 +138,19 @@
   - [x] Retained `latest` tag generation for pushes directly to `main`
   - [x] Ensured new commits to PR branches (`synchronize`) trigger container builds
 
+- [x] **18. Passkey (WebAuthn) Authentication & Biometrics Management**
+  - [x] Created dedicated branch `passkey-auth` based on `main`
+  - [x] Integrated `webauthn>=2.1.0` dependency in `requirements.txt`
+  - [x] Added SQLite `passkeys` table schema in `app/database.py` with foreign key cascaded user links
+  - [x] Implemented WebAuthn registration and authentication options generation, challenge management with 5-minute TTL, and signature verification in `app/auth.py`
+  - [x] Added Passkey API endpoints (`/api/passkeys/register/options`, `/api/passkeys/register/verify`, `/settings/passkeys/{id}/delete`, `/api/auth/passkey/options`, `/api/auth/passkey/verify`) in `app/main.py`
+  - [x] Added "Passkeys & Biometrics" management card with device list and registration modal in `app/templates/settings.html`
+  - [x] Added 1-click "Sign in with Passkey" button and error feedback in `app/templates/login.html`
+  - [x] Implemented WebAuthn Base64URL encoding/decoding and browser authenticator handlers in `app/static/app.js`
+  - [x] Added comprehensive automated tests in `test_app.py`
+  - [x] Formatted Python code with `black`
+
+
 
 
 

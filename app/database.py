@@ -43,6 +43,23 @@ def init_db():
             );
         """)
 
+        # Passkeys (WebAuthn credentials) table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS passkeys (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                credential_id TEXT UNIQUE NOT NULL,
+                public_key TEXT NOT NULL,
+                sign_count INTEGER NOT NULL DEFAULT 0,
+                name TEXT NOT NULL,
+                aaguid TEXT,
+                transports TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                last_used_at TIMESTAMP,
+                FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+            );
+        """)
+
         # Settings table (key-value store)
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS settings (
@@ -245,3 +262,102 @@ def format_utc_timestamp(ts: Optional[int]) -> str:
     from datetime import datetime, timezone
 
     return datetime.fromtimestamp(ts, timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+
+
+def get_user_by_username(username: str) -> Optional[Dict[str, Any]]:
+    """Retrieves a user row by username."""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM users WHERE username = ?", (username,))
+        row = cursor.fetchone()
+        return dict(row) if row else None
+
+
+def get_user_by_id(user_id: int) -> Optional[Dict[str, Any]]:
+    """Retrieves a user row by user ID."""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM users WHERE id = ?", (user_id,))
+        row = cursor.fetchone()
+        return dict(row) if row else None
+
+
+def get_user_passkeys(user_id: int) -> List[Dict[str, Any]]:
+    """Returns all registered passkeys for a given user ID."""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT id, user_id, credential_id, name, aaguid, transports, created_at, last_used_at, sign_count "
+            "FROM passkeys WHERE user_id = ? ORDER BY created_at DESC",
+            (user_id,),
+        )
+        return [dict(row) for row in cursor.fetchall()]
+
+
+def get_passkey_by_credential_id(credential_id: str) -> Optional[Dict[str, Any]]:
+    """Looks up a passkey record by its unique credential ID."""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT * FROM passkeys WHERE credential_id = ?",
+            (credential_id,),
+        )
+        row = cursor.fetchone()
+        return dict(row) if row else None
+
+
+def get_all_passkey_credentials() -> List[Dict[str, Any]]:
+    """Returns all registered passkey credentials across all users."""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT id, user_id, credential_id, public_key, sign_count, transports FROM passkeys"
+        )
+        return [dict(row) for row in cursor.fetchall()]
+
+
+def save_passkey(
+    user_id: int,
+    credential_id: str,
+    public_key: str,
+    sign_count: int,
+    name: str,
+    aaguid: Optional[str] = None,
+    transports: Optional[str] = None,
+) -> int:
+    """Saves a new passkey credential to the database."""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            INSERT INTO passkeys (user_id, credential_id, public_key, sign_count, name, aaguid, transports)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (user_id, credential_id, public_key, sign_count, name, aaguid, transports),
+        )
+        return cursor.lastrowid
+
+
+def update_passkey_usage(credential_id: str, sign_count: int):
+    """Updates the sign count and last used timestamp for a passkey."""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            UPDATE passkeys
+            SET sign_count = ?, last_used_at = CURRENT_TIMESTAMP
+            WHERE credential_id = ?
+            """,
+            (sign_count, credential_id),
+        )
+
+
+def delete_passkey(passkey_id: int, user_id: int) -> bool:
+    """Deletes a passkey belonging to a specific user."""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "DELETE FROM passkeys WHERE id = ? AND user_id = ?",
+            (passkey_id, user_id),
+        )
+        return cursor.rowcount > 0
