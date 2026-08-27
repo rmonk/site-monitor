@@ -869,6 +869,8 @@ def test_uptime_calculation_and_periods():
 
     pct_all, stats_all = get_uptime_statistics("all")
     assert pct_all == 90.0
+    assert stats_all[m_id]["total_checks"] == 10
+    assert stats_all[m_id]["uptime_pct"] == 90.0
 
     # 4. Test Dashboard HTTP endpoint with period queries
     dash_1h = client.get(
