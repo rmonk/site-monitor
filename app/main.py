@@ -75,6 +75,9 @@ from app.database import (
     get_user_passkeys,
     save_passkey,
     delete_passkey,
+    VALID_UPTIME_PERIODS,
+    canonicalize_period,
+    get_uptime_statistics,
 )
 from app.auth import (
     hash_password,
@@ -266,7 +269,7 @@ async def healthz():
 
 
 @app.get("/", response_class=HTMLResponse)
-async def dashboard(request: Request):
+async def dashboard(request: Request, period: Optional[str] = None):
     auth_mode = get_setting("auth_mode", "readonly_public")
     user = get_current_user(request)
 
@@ -275,6 +278,13 @@ async def dashboard(request: Request):
             url="/login?msg=Please+login+to+access+dashboard&type=warning",
             status_code=status.HTTP_303_SEE_OTHER,
         )
+
+    # Determine requested time window period (query param > cookie > default 24h)
+    selected_period = canonicalize_period(
+        period or request.cookies.get("uptime_period") or "24h"
+    )
+    overall_uptime_pct, monitor_uptimes = get_uptime_statistics(selected_period)
+    _, period_label = VALID_UPTIME_PERIODS.get(selected_period, (86400, "1 Day"))
 
     with get_db() as conn:
         cursor = conn.cursor()
@@ -323,6 +333,12 @@ async def dashboard(request: Request):
         )
         m_dict["last_check_time"] = latest_check["timestamp"] if latest_check else None
 
+        # Uptime stats for this individual monitor
+        m_stats = monitor_uptimes.get(m_id)
+        m_dict["uptime_pct"] = m_stats["uptime_pct"] if m_stats else None
+        m_dict["total_checks"] = m_stats["total_checks"] if m_stats else 0
+        m_dict["up_checks"] = m_stats["up_checks"] if m_stats else 0
+
         # Pushover Receipt & Acknowledgment details
         m_dict["is_currently_down"] = a_state["is_currently_down"] if a_state else 0
         m_dict["active_receipts"] = (
@@ -346,10 +362,17 @@ async def dashboard(request: Request):
         monitors.append(m_dict)
 
     total_count = len(monitors)
-    uptime_pct = round((up_count / total_count * 100), 1) if total_count > 0 else 100.0
 
     default_repeat = get_setting_bool("default_repeat_alerts", True)
     default_repeat_interval = get_setting("default_repeat_interval_minutes", "60")
+
+    available_periods = [
+        {"key": "1h", "label": "1 Hour"},
+        {"key": "24h", "label": "1 Day"},
+        {"key": "7d", "label": "1 Week"},
+        {"key": "30d", "label": "1 Month"},
+        {"key": "all", "label": "All Time"},
+    ]
 
     ctx = get_template_context(request, active_page="dashboard")
     ctx.update(
@@ -358,12 +381,23 @@ async def dashboard(request: Request):
             "total_count": total_count,
             "up_count": up_count,
             "down_count": down_count,
-            "uptime_pct": uptime_pct,
+            "uptime_pct": overall_uptime_pct,
+            "selected_period": selected_period,
+            "period_label": period_label,
+            "available_periods": available_periods,
             "default_repeat_alerts": default_repeat,
             "default_repeat_interval": default_repeat_interval,
         }
     )
-    return templates.TemplateResponse(request, "dashboard.html", ctx)
+    response = templates.TemplateResponse(request, "dashboard.html", ctx)
+    if period:
+        response.set_cookie(
+            key="uptime_period",
+            value=selected_period,
+            max_age=31536000,
+            samesite="lax",
+        )
+    return response
 
 
 @app.get("/screenshots/{filename}")
@@ -1211,13 +1245,17 @@ async def passkey_delete_post(request: Request, passkey_id: int):
 
 
 @app.get("/api/status")
-async def api_status(request: Request):
+async def api_status(request: Request, period: Optional[str] = "24h"):
     """JSON API endpoint returning health and monitor status summary."""
     auth_mode = get_setting("auth_mode", "readonly_public")
     user = get_current_user(request)
 
     if auth_mode == "require_login" and not user:
         raise HTTPException(status_code=401, detail="Authentication required")
+
+    selected_period = canonicalize_period(period)
+    overall_uptime_pct, monitor_uptimes = get_uptime_statistics(selected_period)
+    _, period_label = VALID_UPTIME_PERIODS.get(selected_period, (86400, "1 Day"))
 
     with get_db() as conn:
         cursor = conn.cursor()
@@ -1243,6 +1281,7 @@ async def api_status(request: Request):
         m_id = m["id"]
         last_check = latest_checks.get(m_id)
         a_state = alert_states.get(m_id)
+        m_stats = monitor_uptimes.get(m_id)
 
         monitors_status.append(
             {
@@ -1254,6 +1293,9 @@ async def api_status(request: Request):
                 "consecutive_failures": (
                     a_state["consecutive_failures"] if a_state else 0
                 ),
+                "uptime_pct": m_stats["uptime_pct"] if m_stats else None,
+                "total_checks": m_stats["total_checks"] if m_stats else 0,
+                "up_checks": m_stats["up_checks"] if m_stats else 0,
                 "last_check": last_check,
             }
         )
@@ -1261,6 +1303,9 @@ async def api_status(request: Request):
     return {
         "status": "ok",
         "timestamp": datetime.now(timezone.utc).isoformat(),
+        "period": selected_period,
+        "period_label": period_label,
+        "overall_uptime_pct": overall_uptime_pct,
         "monitors": monitors_status,
     }
 

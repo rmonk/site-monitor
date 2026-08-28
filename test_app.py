@@ -769,6 +769,157 @@ def test_passkey_auth_and_management():
     assert get_passkey_by_credential_id(mock_cred_id) is None
 
 
+def test_uptime_calculation_and_periods():
+    """Verifies that uptime percentage calculates accurately over time windows and is not stuck at 100%."""
+    from datetime import datetime, timezone, timedelta
+    from app.database import get_uptime_statistics, canonicalize_period
+
+    # 1. Login as admin
+    login_res = client.post(
+        "/login",
+        data={"username": "testadmin", "password": "testsecret123"},
+        follow_redirects=False,
+    )
+    session_token = login_res.cookies.get("session_token")
+
+    # 2. Create a monitor for uptime test
+    create_res = client.post(
+        "/monitors/new",
+        data={
+            "name": "Historical Uptime Host",
+            "url": "https://example-uptime-test.org",
+            "check_interval": "60",
+            "timeout": "5",
+            "failure_threshold": "1",
+            "capture_screenshots": "0",
+        },
+        cookies={"session_token": session_token} if session_token else {},
+        follow_redirects=False,
+    )
+    assert create_res.status_code == 303
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT id FROM monitors WHERE name = 'Historical Uptime Host'")
+        m_id = cursor.fetchone()["id"]
+
+        # Clear existing check_history to test exact counts
+        cursor.execute("DELETE FROM check_history")
+
+        now = datetime.now(timezone.utc)
+
+        # 3 checks within last 30 minutes (2 UP, 1 DOWN) -> 1h window uptime = 66.7%
+        ts_10m = (now - timedelta(minutes=10)).strftime("%Y-%m-%d %H:%M:%S")
+        ts_20m = (now - timedelta(minutes=20)).strftime("%Y-%m-%d %H:%M:%S")
+        ts_30m = (now - timedelta(minutes=30)).strftime("%Y-%m-%d %H:%M:%S")
+        cursor.execute(
+            "INSERT INTO check_history (monitor_id, is_up, status_code, timestamp) VALUES (?, 1, 200, ?)",
+            (m_id, ts_10m),
+        )
+        cursor.execute(
+            "INSERT INTO check_history (monitor_id, is_up, status_code, timestamp) VALUES (?, 1, 200, ?)",
+            (m_id, ts_20m),
+        )
+        cursor.execute(
+            "INSERT INTO check_history (monitor_id, is_up, status_code, timestamp) VALUES (?, 0, 500, ?)",
+            (m_id, ts_30m),
+        )
+
+        # 1 check 12 hours ago (1 UP) -> 24h window: 3 UP, 1 DOWN out of 4 = 75.0%
+        ts_12h = (now - timedelta(hours=12)).strftime("%Y-%m-%d %H:%M:%S")
+        cursor.execute(
+            "INSERT INTO check_history (monitor_id, is_up, status_code, timestamp) VALUES (?, 1, 200, ?)",
+            (m_id, ts_12h),
+        )
+
+        # 1 check 3 days ago (1 UP) -> 7d window: 4 UP, 1 DOWN out of 5 = 80.0%
+        ts_3d = (now - timedelta(days=3)).strftime("%Y-%m-%d %H:%M:%S")
+        cursor.execute(
+            "INSERT INTO check_history (monitor_id, is_up, status_code, timestamp) VALUES (?, 1, 200, ?)",
+            (m_id, ts_3d),
+        )
+
+        # 5 checks 15 days ago (5 UP) -> 30d / all window: 9 UP, 1 DOWN out of 10 = 90.0%
+        ts_15d = (now - timedelta(days=15)).strftime("%Y-%m-%d %H:%M:%S")
+        for _ in range(5):
+            cursor.execute(
+                "INSERT INTO check_history (monitor_id, is_up, status_code, timestamp) VALUES (?, 1, 200, ?)",
+                (m_id, ts_15d),
+            )
+
+    # 3. Test python calculation helper directly across periods
+    pct_1h, stats_1h = get_uptime_statistics("1h")
+    assert pct_1h == 66.7
+    assert stats_1h[m_id]["total_checks"] == 3
+    assert stats_1h[m_id]["up_checks"] == 2
+    assert stats_1h[m_id]["uptime_pct"] == 66.7
+
+    pct_24h, stats_24h = get_uptime_statistics("24h")
+    assert pct_24h == 75.0
+    assert stats_24h[m_id]["total_checks"] == 4
+    assert stats_24h[m_id]["uptime_pct"] == 75.0
+
+    pct_7d, stats_7d = get_uptime_statistics("7d")
+    assert pct_7d == 80.0
+    assert stats_7d[m_id]["total_checks"] == 5
+
+    pct_30d, stats_30d = get_uptime_statistics("30d")
+    assert pct_30d == 90.0
+    assert stats_30d[m_id]["total_checks"] == 10
+
+    pct_all, stats_all = get_uptime_statistics("all")
+    assert pct_all == 90.0
+    assert stats_all[m_id]["total_checks"] == 10
+    assert stats_all[m_id]["uptime_pct"] == 90.0
+
+    # 4. Test Dashboard HTTP endpoint with period queries
+    dash_1h = client.get(
+        "/?period=1h",
+        cookies={"session_token": session_token} if session_token else {},
+    )
+    assert dash_1h.status_code == 200
+    assert "66.7%" in dash_1h.text
+    assert "1 Hour" in dash_1h.text
+    assert "Uptime Time Window" in dash_1h.text
+    assert "Uptime (1 Hour)" in dash_1h.text
+
+    dash_24h = client.get(
+        "/?period=24h",
+        cookies={"session_token": session_token} if session_token else {},
+    )
+    assert dash_24h.status_code == 200
+    assert "75.0%" in dash_24h.text
+    assert "Uptime (1 Day)" in dash_24h.text
+
+    dash_7d = client.get(
+        "/?period=7d",
+        cookies={"session_token": session_token} if session_token else {},
+    )
+    assert dash_7d.status_code == 200
+    assert "80.0%" in dash_7d.text
+
+    dash_30d = client.get(
+        "/?period=30d",
+        cookies={"session_token": session_token} if session_token else {},
+    )
+    assert dash_30d.status_code == 200
+    assert "90.0%" in dash_30d.text
+
+    # 5. Test JSON status API with period parameter
+    api_res = client.get(
+        "/api/status?period=1h",
+        cookies={"session_token": session_token} if session_token else {},
+    )
+    assert api_res.status_code == 200
+    api_data = api_res.json()
+    assert api_data["overall_uptime_pct"] == 66.7
+    assert api_data["period"] == "1h"
+    assert any(
+        m["name"] == "Historical Uptime Host" and m["uptime_pct"] == 66.7
+        for m in api_data["monitors"]
+    )
+
+
 if __name__ == "__main__":
     setup_module(None)
     test_initial_setup()
@@ -788,4 +939,5 @@ if __name__ == "__main__":
     test_time_display_settings_and_preferences()
     test_security_sanitization()
     test_passkey_auth_and_management()
+    test_uptime_calculation_and_periods()
     print("ALL test_app.py tests passed successfully!")
