@@ -18,6 +18,7 @@ from app.alerts import (
     get_pushover_receipt_status,
 )
 from app.screenshots import capture_screenshot
+from app.resolver import reload_dns_resolver, is_dns_error
 
 logger = logging.getLogger("site_monitor.checker")
 
@@ -90,7 +91,19 @@ async def check_monitor(
         async with httpx.AsyncClient(
             timeout=float(timeout), follow_redirects=True
         ) as client:
-            response = await client.get(url)
+            try:
+                response = await client.get(url)
+            except (httpx.ConnectError, httpx.RequestError) as initial_err:
+                if is_dns_error(initial_err):
+                    logger.warning(
+                        f"DNS/Connection error resolving '{url}': {initial_err}. Reloading DNS resolver via res_init()..."
+                    )
+                    reload_dns_resolver()
+                    # Retry once with refreshed DNS resolver configuration
+                    response = await client.get(url)
+                else:
+                    raise
+
             response_time_ms = round((time.time() - start_time) * 1000, 2)
             status_code = response.status_code
 
@@ -123,10 +136,14 @@ async def check_monitor(
         is_up = False
         error_message = f"Request timed out after {timeout} seconds"
     except httpx.RequestError as req_err:
+        if is_dns_error(req_err):
+            reload_dns_resolver()
         response_time_ms = round((time.time() - start_time) * 1000, 2)
         is_up = False
         error_message = f"Connection error: {req_err}"
     except Exception as exc:
+        if is_dns_error(exc):
+            reload_dns_resolver()
         response_time_ms = round((time.time() - start_time) * 1000, 2)
         is_up = False
         error_message = f"Unexpected error: {exc}"
@@ -558,6 +575,8 @@ async def watchdog_worker_loop(task_holder: Optional[Dict[str, Any]] = None):
                                 f"Dead Man's Switch external ping sent to {ping_url} (HTTP {resp.status_code})"
                             )
             except Exception as ping_err:
+                if is_dns_error(ping_err):
+                    reload_dns_resolver()
                 logger.warning(
                     f"Failed to send Dead Man's Switch external ping: {ping_err}"
                 )

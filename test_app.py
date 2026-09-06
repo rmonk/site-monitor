@@ -769,6 +769,143 @@ def test_passkey_auth_and_management():
     assert get_passkey_by_credential_id(mock_cred_id) is None
 
 
+def test_dns_resolver_reload_and_detection():
+    """Verifies glibc resolver reload, debouncing, and DNS exception detection."""
+    from app.resolver import reload_dns_resolver, is_dns_error
+    import socket
+    import httpx
+
+    # 1. Test reload_dns_resolver returns boolean without error
+    result = reload_dns_resolver(force=True)
+    assert isinstance(result, bool)
+
+    # 2. Debouncing check: rapid call within 2 seconds should return True immediately
+    res_debounced = reload_dns_resolver(force=False)
+    assert res_debounced is True
+
+    # 3. Test is_dns_error detection
+    # socket.gaierror
+    gai_err = socket.gaierror(-2, "Name or service not known")
+    assert is_dns_error(gai_err) is True
+
+    # Nested in httpx.ConnectError
+    conn_err = httpx.ConnectError("Failed to connect", request=None)
+    conn_err.__cause__ = gai_err
+    assert is_dns_error(conn_err) is True
+
+    # String message markers
+    assert is_dns_error(RuntimeError("Temporary failure in name resolution")) is True
+    assert is_dns_error(Exception("getaddrinfo failed for host")) is True
+    assert is_dns_error(Exception("ERR_NAME_NOT_RESOLVED")) is True
+
+    # Non-DNS errors
+    assert is_dns_error(ValueError("Invalid integer")) is False
+    assert is_dns_error(httpx.HTTPStatusError("500 Server Error", request=None, response=None)) is False
+    assert is_dns_error(None) is False
+
+
+def test_check_monitor_dns_error_retry():
+    """Verifies that check_monitor triggers resolver reload and retries on DNS failure."""
+    import asyncio
+    import socket
+    import httpx
+    from unittest.mock import patch, MagicMock
+    from app.monitor import check_monitor
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO monitors (name, url, timeout, failure_threshold) VALUES (?, ?, ?, ?)",
+            ("DNS Test Monitor", "https://flaky-dns-host.example.com", 5, 1),
+        )
+        m_id = cursor.lastrowid
+        cursor.execute("SELECT * FROM monitors WHERE id = ?", (m_id,))
+        monitor_payload = dict(cursor.fetchone())
+
+    # Scenario 1: Initial DNS failure, successful on retry after reload
+    call_count = 0
+
+    async def mock_get(url):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            gai = socket.gaierror(-2, "Name or service not known")
+            err = httpx.ConnectError("Connection failed", request=None)
+            err.__cause__ = gai
+            raise err
+        else:
+            mock_resp = MagicMock()
+            mock_resp.status_code = 200
+            mock_resp.text = "OK"
+            return mock_resp
+
+    with patch("httpx.AsyncClient.get", side_effect=mock_get):
+        with patch("app.monitor.reload_dns_resolver") as mock_reload:
+            result = asyncio.run(check_monitor(monitor_payload, is_manual=True))
+            assert call_count == 2
+            assert mock_reload.called
+            assert result["is_up"] is True
+            assert result["status_code"] == 200
+
+    # Scenario 2: Persistent DNS failure (both initial and retry fail)
+    persistent_count = 0
+
+    async def mock_get_persistent_fail(url):
+        nonlocal persistent_count
+        persistent_count += 1
+        gai = socket.gaierror(-3, "Temporary failure in name resolution")
+        err = httpx.ConnectError("Persistent DNS failure", request=None)
+        err.__cause__ = gai
+        raise err
+
+    with patch("httpx.AsyncClient.get", side_effect=mock_get_persistent_fail):
+        with patch("app.monitor.reload_dns_resolver") as mock_reload:
+            result = asyncio.run(check_monitor(monitor_payload, is_manual=True))
+            assert persistent_count >= 1
+            assert mock_reload.called
+            assert result["is_up"] is False
+            assert "Connection error" in result["error_message"]
+
+
+def test_pushover_notification_dns_recovery():
+    """Verifies that Pushover notifications reload DNS and retry when a DNS error occurs."""
+    import asyncio
+    import socket
+    import httpx
+    from unittest.mock import patch, MagicMock
+    from app.alerts import send_pushover_notification, set_setting
+
+    set_setting("pushover_enabled", "true")
+    set_setting("pushover_api_token", "dummy_token_123")
+    set_setting("pushover_user_key", "dummy_user_key_456")
+
+    call_count = 0
+
+    async def mock_post(url, data=None):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            gai = socket.gaierror(-2, "Name or service not known")
+            err = httpx.ConnectError("Failed to reach api.pushover.net", request=None)
+            err.__cause__ = gai
+            raise err
+        else:
+            mock_resp = MagicMock()
+            mock_resp.status_code = 200
+            mock_resp.json.return_value = {"status": 1, "receipt": "test_receipt_123"}
+            return mock_resp
+
+    with patch("httpx.AsyncClient.post", side_effect=mock_post):
+        with patch("app.alerts.reload_dns_resolver") as mock_reload:
+            ok, msg, receipt = asyncio.run(
+                send_pushover_notification("Test Alert", "Testing DNS retry", priority=0)
+            )
+            assert call_count == 2
+            assert mock_reload.called
+            assert ok is True
+            assert receipt == "test_receipt_123"
+
+
 if __name__ == "__main__":
     setup_module(None)
     test_initial_setup()
@@ -788,4 +925,7 @@ if __name__ == "__main__":
     test_time_display_settings_and_preferences()
     test_security_sanitization()
     test_passkey_auth_and_management()
+    test_dns_resolver_reload_and_detection()
+    test_check_monitor_dns_error_retry()
+    test_pushover_notification_dns_recovery()
     print("ALL test_app.py tests passed successfully!")

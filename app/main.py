@@ -106,6 +106,7 @@ from app.monitor import (
     sync_monitor_receipt_status,
 )
 from app.screenshots import get_screenshots_dir
+from app.resolver import reload_dns_resolver
 from fastapi.responses import FileResponse
 
 
@@ -113,6 +114,7 @@ from fastapi.responses import FileResponse
 async def lifespan(app: FastAPI):
     """Manages application startup background loops and graceful shutdown teardown."""
     # Startup logic
+    reload_dns_resolver(force=True)
     init_db()
     task_holder: Dict[str, Any] = {}
     task_holder["worker_task"] = asyncio.create_task(monitoring_worker_loop())

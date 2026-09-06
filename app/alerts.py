@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from typing import Optional, Tuple, Dict, Any
 import httpx
@@ -8,6 +9,7 @@ from app.database import (
     get_setting_int,
     parse_receipt_list,
 )
+from app.resolver import reload_dns_resolver, is_dns_error
 
 logger = logging.getLogger("site_monitor.alerts")
 
@@ -16,25 +18,41 @@ PUSHOVER_CANCEL_URL = "https://api.pushover.net/1/receipts/{receipt}/cancel.json
 PUSHOVER_RECEIPT_STATUS_URL = "https://api.pushover.net/1/receipts/{receipt}.json"
 
 _alert_client: Optional[httpx.AsyncClient] = None
+_alert_client_loop: Optional[asyncio.AbstractEventLoop] = None
 
 
 def get_alert_client() -> httpx.AsyncClient:
-    """Returns a shared httpx.AsyncClient with connection pooling."""
-    global _alert_client
-    if _alert_client is None or _alert_client.is_closed:
+    """Returns a shared httpx.AsyncClient with connection pooling bound to current event loop."""
+    global _alert_client, _alert_client_loop
+    try:
+        current_loop = asyncio.get_running_loop()
+    except RuntimeError:
+        current_loop = None
+
+    if (
+        _alert_client is None
+        or _alert_client.is_closed
+        or (_alert_client_loop is not None and _alert_client_loop is not current_loop)
+    ):
         _alert_client = httpx.AsyncClient(
             timeout=10.0,
             limits=httpx.Limits(max_keepalive_connections=5, max_connections=10),
         )
+        _alert_client_loop = current_loop
     return _alert_client
 
 
 async def close_alert_client():
-    """Closes the shared HTTP client on application shutdown."""
-    global _alert_client
-    if _alert_client is not None and not _alert_client.is_closed:
-        await _alert_client.aclose()
-        _alert_client = None
+    """Closes the shared HTTP client on application shutdown or connection reset."""
+    global _alert_client, _alert_client_loop
+    client = _alert_client
+    _alert_client = None
+    _alert_client_loop = None
+    if client is not None and not client.is_closed:
+        try:
+            await client.aclose()
+        except Exception:
+            pass
 
 
 def is_pushover_configured() -> bool:
@@ -89,6 +107,28 @@ async def send_pushover_notification(
             logger.error(err)
             return False, err, None
     except Exception as e:
+        if is_dns_error(e):
+            logger.warning(
+                f"DNS error sending Pushover notification: {e}. Reloading DNS resolver and resetting client..."
+            )
+            reload_dns_resolver()
+            await close_alert_client()
+            try:
+                # Retry once with refreshed client and resolver
+                client = get_alert_client()
+                resp = await client.post(PUSHOVER_URL, data=data)
+                if resp.status_code == 200:
+                    receipt = None
+                    try:
+                        receipt = resp.json().get("receipt")
+                    except Exception:
+                        pass
+                    logger.info(
+                        f"Pushover notification sent after DNS reload: {title} (priority={priority}, receipt={receipt})"
+                    )
+                    return True, "Notification sent successfully", receipt
+            except Exception as retry_err:
+                e = retry_err
         err = f"Failed to send Pushover notification: {e}"
         logger.error(err)
         return False, err, None
@@ -130,6 +170,9 @@ async def get_pushover_receipt_status(receipt_id: str) -> Optional[Dict[str, Any
                 f"Pushover receipt query returned HTTP {resp.status_code}: {resp.text}"
             )
     except Exception as e:
+        if is_dns_error(e):
+            reload_dns_resolver()
+            await close_alert_client()
         logger.error(f"Failed to query Pushover receipt status for {receipt_id}: {e}")
 
     return None
@@ -163,6 +206,9 @@ async def cancel_pushover_receipt(receipt_id: str) -> Tuple[bool, str]:
             logger.warning(err)
             return False, err
     except Exception as e:
+        if is_dns_error(e):
+            reload_dns_resolver()
+            await close_alert_client()
         err = f"Failed to cancel Pushover receipt {receipt_id}: {e}"
         logger.error(err)
         return False, err
