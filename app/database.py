@@ -1,7 +1,8 @@
 import sqlite3
 import logging
 from contextlib import contextmanager
-from typing import Optional, List, Dict, Any
+from datetime import datetime, timezone, timedelta
+from typing import Optional, List, Dict, Any, Tuple
 from app.config import DB_PATH, INITIAL_ADMIN_USER, INITIAL_ADMIN_PASSWORD
 
 logger = logging.getLogger("site_monitor.database")
@@ -361,3 +362,101 @@ def delete_passkey(passkey_id: int, user_id: int) -> bool:
             (passkey_id, user_id),
         )
         return cursor.rowcount > 0
+
+
+# ==========================================
+# Uptime Periods & Statistics
+# ==========================================
+
+VALID_UPTIME_PERIODS: Dict[str, Tuple[Optional[int], str]] = {
+    "1h": (3600, "1 Hour"),
+    "24h": (86400, "1 Day"),
+    "7d": (604800, "1 Week"),
+    "30d": (2592000, "1 Month"),
+    "all": (None, "All Time"),
+}
+
+
+def canonicalize_period(period: Optional[str]) -> str:
+    """Normalizes period query strings to standard canonical keys: 1h, 24h, 7d, 30d, all."""
+    if not period:
+        return "24h"
+    p = str(period).strip().lower()
+    mapping = {
+        "1h": "1h",
+        "1hour": "1h",
+        "1hr": "1h",
+        "1d": "24h",
+        "24h": "24h",
+        "1day": "24h",
+        "7d": "7d",
+        "1w": "7d",
+        "1week": "7d",
+        "30d": "30d",
+        "1m": "30d",
+        "1month": "30d",
+        "all": "all",
+        "alltime": "all",
+    }
+    return mapping.get(p, "24h")
+
+
+def get_uptime_statistics(
+    period: str = "24h",
+) -> Tuple[float, Dict[int, Dict[str, Any]]]:
+    """
+    Computes overall and per-monitor uptime percentages from check_history over the given period.
+    Returns (overall_uptime_pct, {monitor_id: {"total_checks": int, "up_checks": int, "uptime_pct": Optional[float]}}).
+    """
+    canon_p = canonicalize_period(period)
+    seconds, _ = VALID_UPTIME_PERIODS.get(canon_p, (86400, "1 Day"))
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+        if seconds is not None:
+            cutoff_dt = datetime.now(timezone.utc) - timedelta(seconds=seconds)
+            cutoff_str = cutoff_dt.strftime("%Y-%m-%d %H:%M:%S")
+            cursor.execute(
+                """
+                SELECT 
+                    monitor_id,
+                    COUNT(*) AS total_checks,
+                    SUM(CASE WHEN is_up = 1 THEN 1 ELSE 0 END) AS up_checks
+                FROM check_history
+                WHERE timestamp >= ?
+                GROUP BY monitor_id
+                """,
+                (cutoff_str,),
+            )
+        else:
+            cursor.execute("""
+                SELECT 
+                    monitor_id,
+                    COUNT(*) AS total_checks,
+                    SUM(CASE WHEN is_up = 1 THEN 1 ELSE 0 END) AS up_checks
+                FROM check_history
+                GROUP BY monitor_id
+                """)
+        rows = cursor.fetchall()
+
+    monitor_stats: Dict[int, Dict[str, Any]] = {}
+    overall_total = 0
+    overall_up = 0
+
+    for r in rows:
+        m_id = r["monitor_id"]
+        total = r["total_checks"] or 0
+        up = r["up_checks"] or 0
+        overall_total += total
+        overall_up += up
+        pct = round((up / total * 100.0), 1) if total > 0 else None
+        monitor_stats[m_id] = {
+            "total_checks": total,
+            "up_checks": up,
+            "uptime_pct": pct,
+        }
+
+    overall_pct = (
+        round((overall_up / overall_total * 100.0), 1) if overall_total > 0 else 100.0
+    )
+    return overall_pct, monitor_stats
