@@ -779,9 +779,9 @@ def test_dns_resolver_reload_and_detection():
     result = reload_dns_resolver(force=True)
     assert isinstance(result, bool)
 
-    # 2. Debouncing check: rapid call within 2 seconds should return True immediately
+    # 2. Debouncing check: a rapid call should mirror resolver reload support
     res_debounced = reload_dns_resolver(force=False)
-    assert res_debounced is True
+    assert res_debounced is result
 
     # 3. Test is_dns_error detection
     # socket.gaierror

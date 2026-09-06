@@ -100,6 +100,7 @@ async def check_monitor(
                     )
                     reload_dns_resolver()
                     # Retry once with refreshed DNS resolver configuration
+                    start_time = time.time()
                     response = await client.get(url)
                 else:
                     raise

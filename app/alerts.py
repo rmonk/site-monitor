@@ -29,11 +29,12 @@ def get_alert_client() -> httpx.AsyncClient:
     except RuntimeError:
         current_loop = None
 
-    if (
-        _alert_client is None
-        or _alert_client.is_closed
-        or (_alert_client_loop is not None and _alert_client_loop is not current_loop)
-    ):
+    if _alert_client_loop is not None and _alert_client_loop is not current_loop:
+        # The stale client cannot be closed safely from a different event loop.
+        _alert_client = None
+        _alert_client_loop = None
+
+    if _alert_client is None or _alert_client.is_closed:
         _alert_client = httpx.AsyncClient(
             timeout=10.0,
             limits=httpx.Limits(max_keepalive_connections=5, max_connections=10),
@@ -172,7 +173,6 @@ async def get_pushover_receipt_status(receipt_id: str) -> Optional[Dict[str, Any
     except Exception as e:
         if is_dns_error(e):
             reload_dns_resolver()
-            await close_alert_client()
         logger.error(f"Failed to query Pushover receipt status for {receipt_id}: {e}")
 
     return None
@@ -208,7 +208,6 @@ async def cancel_pushover_receipt(receipt_id: str) -> Tuple[bool, str]:
     except Exception as e:
         if is_dns_error(e):
             reload_dns_resolver()
-            await close_alert_client()
         err = f"Failed to cancel Pushover receipt {receipt_id}: {e}"
         logger.error(err)
         return False, err
