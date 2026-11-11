@@ -1055,6 +1055,129 @@ def test_uptime_calculation_and_periods():
     )
 
 
+def _playwright_driver_pids() -> set:
+    """Returns the PIDs of live Playwright driver processes started by this test process."""
+    from app.screenshots import _driver_child_pids
+
+    return _driver_child_pids()
+
+
+async def _wait_for_driver_exit(before: set, seconds: float = 20.0) -> set:
+    """
+    Waits until no driver processes beyond `before` remain, and returns any that do.
+    Leftovers are SIGKILLed before returning, so a failing test cannot hang the event
+    loop's shutdown on a stopped driver or leave processes behind.
+    """
+    import asyncio
+    import signal
+
+    for _ in range(int(seconds / 0.25)):
+        leftover = _playwright_driver_pids() - before
+        if not leftover:
+            return leftover
+        await asyncio.sleep(0.25)
+    leftover = _playwright_driver_pids() - before
+    for pid in leftover:
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+    return leftover
+
+
+def test_screenshot_cancellation_does_not_leak_playwright_drivers():
+    """Cancelling a capture at any point (start-up, launch, navigation) must not leave a driver running."""
+    import asyncio
+
+    if pytest is None:
+        return
+    pytest.importorskip("playwright")
+    from playwright.async_api import async_playwright
+
+    from app.screenshots import _capture_with_playwright, get_screenshots_dir
+
+    async def chromium_installed() -> bool:
+        async with async_playwright() as p:
+            return os.path.exists(p.chromium.executable_path)
+
+    if not asyncio.run(chromium_installed()):
+        pytest.skip("Playwright Chromium not installed (playwright install chromium)")
+
+    target = get_screenshots_dir() / "cancel_test.png"
+
+    async def run():
+        before = _playwright_driver_pids()
+        # Delays spread across driver start-up, browser launch and navigation.
+        for delay in (0.0, 0.01, 0.05, 0.1, 0.2, 0.4, 0.8, 1.5, 3.0):
+            try:
+                await asyncio.wait_for(
+                    _capture_with_playwright(
+                        target, "http://192.0.2.1/", 0, False, "cancel test"
+                    ),
+                    timeout=delay,
+                )
+            except asyncio.TimeoutError:
+                pass
+        return await _wait_for_driver_exit(before)
+
+    leftover = asyncio.run(run())
+    assert not leftover, f"{len(leftover)} Playwright driver process(es) leaked"
+
+
+def test_unresponsive_playwright_driver_is_killed():
+    """A driver that hangs during start-up or stop is killed instead of left running."""
+    import asyncio
+    import signal
+
+    if pytest is None:
+        return
+    pytest.importorskip("playwright")
+    import app.screenshots as screenshots
+
+    async def hung_during_startup() -> set:
+        before = _playwright_driver_pids()
+        task = asyncio.ensure_future(screenshots._start_playwright())
+        new = set()
+        for _ in range(500):
+            new = _playwright_driver_pids() - before
+            if new or task.done():
+                break
+            await asyncio.sleep(0.002)
+        assert new and not task.done(), "driver start-up finished before it could be stopped"
+        for pid in new:
+            os.kill(pid, signal.SIGSTOP)  # driver now never completes its handshake
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        return await _wait_for_driver_exit(before)
+
+    async def hung_during_stop() -> set:
+        before = _playwright_driver_pids()
+        driver, p = await screenshots._start_playwright()
+        for pid in _playwright_driver_pids() - before:
+            os.kill(pid, signal.SIGSTOP)  # driver now never answers the stop
+        await screenshots._stop_playwright(driver, p)
+        return await _wait_for_driver_exit(before)
+
+    saved = (screenshots._STARTUP_REAP_TIMEOUT, screenshots._STOP_TIMEOUT)
+    screenshots._STARTUP_REAP_TIMEOUT = 1.0
+    screenshots._STOP_TIMEOUT = 1.0
+    try:
+        for scenario in (hung_during_startup, hung_during_stop):
+            # A fresh loop closed without asyncio.run()'s final task cancellation: if the
+            # kill regresses, Playwright's reader task for the killed driver never finishes
+            # cancelling, and asyncio.run() would hang instead of letting the assert fail.
+            loop = asyncio.new_event_loop()
+            try:
+                leftover = loop.run_until_complete(scenario())
+            finally:
+                loop.close()
+            assert not leftover, f"{scenario.__name__}: {len(leftover)} driver(s) left running"
+    finally:
+        screenshots._STARTUP_REAP_TIMEOUT, screenshots._STOP_TIMEOUT = saved
+
 if __name__ == "__main__":
     setup_module(None)
     test_initial_setup()
@@ -1078,4 +1201,6 @@ if __name__ == "__main__":
     test_check_monitor_dns_error_retry()
     test_pushover_notification_dns_recovery()
     test_uptime_calculation_and_periods()
+    test_screenshot_cancellation_does_not_leak_playwright_drivers()
+    test_unresponsive_playwright_driver_is_killed()
     print("ALL test_app.py tests passed successfully!")
