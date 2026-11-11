@@ -13,6 +13,60 @@ logger = logging.getLogger("site_monitor.screenshots")
 # Limit concurrent headless browser processes to prevent memory/CPU spikes
 _screenshot_semaphore = asyncio.Semaphore(2)
 
+# Background Playwright shutdown tasks; held here so they are not garbage collected
+# before they finish.
+_cleanup_tasks: set = set()
+
+
+def _keep_task(task: asyncio.Future) -> asyncio.Future:
+    _cleanup_tasks.add(task)
+    task.add_done_callback(_cleanup_tasks.discard)
+    return task
+
+
+async def _stop_playwright(playwright) -> None:
+    """
+    Stops a Playwright instance, which ends its node driver process (and with it any
+    Chromium it launched). The first step closes the driver's stdin synchronously, so the
+    driver exits even if this coroutine is later cancelled or times out.
+    """
+    try:
+        await asyncio.wait_for(playwright.stop(), timeout=15.0)
+    except Exception as e:
+        logger.warning(f"Playwright driver did not stop cleanly: {e}")
+
+
+def _stop_playwright_when_started(start_task: asyncio.Future) -> None:
+    """Stops the Playwright instance a start task produces, once it has produced one."""
+
+    def _on_started(task: asyncio.Future) -> None:
+        if task.cancelled() or task.exception() is not None:
+            return
+        _keep_task(task.get_loop().create_task(_stop_playwright(task.result())))
+
+    start_task.add_done_callback(_on_started)
+
+
+async def _start_playwright():
+    """
+    Starts Playwright without leaking its driver if the caller is cancelled.
+
+    Playwright spawns the node driver before its start-up handshake completes. If the
+    awaiting coroutine is cancelled during that handshake (a capture timeout, a check
+    timeout or the watchdog restarting the worker), `async with async_playwright()` never
+    runs `__aexit__`, and the driver process stays alive for the life of the container.
+    The start runs as its own task here, so a cancelled caller hands the instance to a
+    background stop instead of dropping it.
+    """
+    from playwright.async_api import async_playwright
+
+    start_task = _keep_task(asyncio.ensure_future(async_playwright().start()))
+    try:
+        return await asyncio.shield(start_task)
+    except asyncio.CancelledError:
+        _stop_playwright_when_started(start_task)
+        raise
+
 
 def get_screenshots_dir() -> Path:
     s_dir = DATA_DIR / "screenshots"
@@ -62,50 +116,63 @@ def generate_fallback_screenshot(target_path: Path, url: str, error_msg: str):
 async def _capture_with_playwright(
     filepath: Path, url: str, monitor_id: int, is_success: bool, error_message: str
 ):
-    from playwright.async_api import (
-        async_playwright,
-        TimeoutError as PlaywrightTimeoutError,
-    )
+    p = await _start_playwright()
+    try:
+        await _run_capture(p, filepath, url, monitor_id, is_success, error_message)
+    finally:
+        # Shielded so a cancellation here cannot skip the stop: the stop task keeps
+        # running in the background and the cancellation still propagates.
+        await asyncio.shield(_keep_task(asyncio.ensure_future(_stop_playwright(p))))
 
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(
-            headless=True,
-            timeout=10000,
-            args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
-        )
+
+async def _run_capture(
+    p,
+    filepath: Path,
+    url: str,
+    monitor_id: int,
+    is_success: bool,
+    error_message: str,
+):
+    from playwright.async_api import TimeoutError as PlaywrightTimeoutError
+
+    browser = await p.chromium.launch(
+        headless=True,
+        timeout=10000,
+        args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
+    )
+    try:
+        page = await browser.new_page(viewport={"width": 1280, "height": 720})
         try:
-            page = await browser.new_page(viewport={"width": 1280, "height": 720})
             try:
-                try:
-                    await page.goto(url, timeout=10000, wait_until="domcontentloaded")
-                    await page.screenshot(path=str(filepath), timeout=5000)
-                    logger.info(
-                        f"Captured Playwright screenshot for monitor {monitor_id} ({'success' if is_success else 'failed'})"
-                    )
-                except PlaywrightTimeoutError as te:
-                    logger.warning(
-                        f"Playwright navigation timed out (10s) for {url}. Generating fallback screenshot."
-                    )
-                    generate_fallback_screenshot(
-                        filepath, url, error_message or "Navigation timed out (10s)"
-                    )
-                except Exception as nav_err:
-                    logger.warning(
-                        f"Playwright navigation error for {url}: {nav_err}. Generating fallback screenshot."
-                    )
-                    generate_fallback_screenshot(
-                        filepath, url, error_message or str(nav_err)
-                    )
-            finally:
-                try:
-                    await page.close()
-                except Exception:
-                    pass
+                await page.goto(url, timeout=10000, wait_until="domcontentloaded")
+                await page.screenshot(path=str(filepath), timeout=5000)
+                logger.info(
+                    f"Captured Playwright screenshot for monitor {monitor_id} ({'success' if is_success else 'failed'})"
+                )
+            except PlaywrightTimeoutError as te:
+                logger.warning(
+                    f"Playwright navigation timed out (10s) for {url}. Generating fallback screenshot."
+                )
+                generate_fallback_screenshot(
+                    filepath, url, error_message or "Navigation timed out (10s)"
+                )
+            except Exception as nav_err:
+                logger.warning(
+                    f"Playwright navigation error for {url}: {nav_err}. Generating fallback screenshot."
+                )
+                generate_fallback_screenshot(
+                    filepath, url, error_message or str(nav_err)
+                )
         finally:
             try:
-                await browser.close()
+                await page.close()
             except Exception:
                 pass
+    finally:
+        try:
+            await browser.close()
+        except Exception:
+            pass
 
 
 async def capture_screenshot(

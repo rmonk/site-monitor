@@ -1055,6 +1055,57 @@ def test_uptime_calculation_and_periods():
     )
 
 
+def _playwright_driver_children() -> int:
+    """Counts Playwright node driver processes started by this test process."""
+    import subprocess
+
+    out = subprocess.run(
+        ["pgrep", "-P", str(os.getpid()), "-f", "playwright/driver"],
+        capture_output=True,
+        text=True,
+    ).stdout
+    return len(out.split())
+
+
+def test_screenshot_cancellation_does_not_leak_playwright_drivers():
+    """Cancelling a capture at any point (start-up, launch, navigation) must not leave a driver running."""
+    import asyncio
+
+    try:
+        import playwright  # noqa: F401
+    except ImportError:
+        if pytest:
+            pytest.skip("playwright not installed")
+        return
+
+    from app.screenshots import _capture_with_playwright, get_screenshots_dir
+
+    target = get_screenshots_dir() / "cancel_test.png"
+
+    async def run():
+        before = _playwright_driver_children()
+        # Delays spread across driver start-up, browser launch and navigation.
+        for delay in (0.0, 0.01, 0.05, 0.1, 0.2, 0.4, 0.8, 1.5, 3.0):
+            try:
+                await asyncio.wait_for(
+                    _capture_with_playwright(
+                        target, "http://192.0.2.1/", 0, False, "cancel test"
+                    ),
+                    timeout=delay,
+                )
+            except (asyncio.TimeoutError, Exception):
+                pass
+        # Give background stops time to finish.
+        for _ in range(40):
+            if _playwright_driver_children() <= before:
+                break
+            await asyncio.sleep(0.5)
+        return before, _playwright_driver_children()
+
+    before, after = asyncio.run(run())
+    assert after <= before, f"{after - before} Playwright driver process(es) leaked"
+
+
 if __name__ == "__main__":
     setup_module(None)
     test_initial_setup()
@@ -1078,4 +1129,5 @@ if __name__ == "__main__":
     test_check_monitor_dns_error_retry()
     test_pushover_notification_dns_recovery()
     test_uptime_calculation_and_periods()
+    test_screenshot_cancellation_does_not_leak_playwright_drivers()
     print("ALL test_app.py tests passed successfully!")
