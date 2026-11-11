@@ -1,6 +1,8 @@
 import asyncio
 import os
 import logging
+import signal
+import weakref
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -13,58 +15,146 @@ logger = logging.getLogger("site_monitor.screenshots")
 # Limit concurrent headless browser processes to prevent memory/CPU spikes
 _screenshot_semaphore = asyncio.Semaphore(2)
 
-# Background Playwright shutdown tasks; held here so they are not garbage collected
-# before they finish.
+# Background Playwright start-up and shutdown tasks; held here so they are not garbage
+# collected before they finish.
 _cleanup_tasks: set = set()
+
+# How long a cancelled capture's Playwright start-up may keep running before its driver
+# is killed, and how long a stop may take before the driver is killed.
+_STARTUP_REAP_TIMEOUT = 30.0
+_STOP_TIMEOUT = 15.0
+
+# One lock per event loop, held only while a driver process is being spawned, so each
+# capture can tell which new driver process is its own.
+_spawn_locks: "weakref.WeakKeyDictionary" = weakref.WeakKeyDictionary()
 
 
 def _keep_task(task: asyncio.Future) -> asyncio.Future:
+    """Holds a reference to a background task until it finishes, and returns it."""
     _cleanup_tasks.add(task)
     task.add_done_callback(_cleanup_tasks.discard)
     return task
 
 
-async def _stop_playwright(playwright) -> None:
+def _driver_child_pids() -> set:
+    """
+    Returns the PIDs of live Playwright driver processes (`node ... run-driver`) that are
+    children of this process. Read from /proc, because Playwright has no public handle on
+    its driver process and its private attributes change between versions.
+    """
+    me = os.getpid()
+    pids = set()
+    try:
+        entries = os.listdir("/proc")
+    except OSError:
+        return pids
+    for entry in entries:
+        if not entry.isdigit():
+            continue
+        try:
+            with open(f"/proc/{entry}/stat") as f:
+                # Fields after the parenthesised command name: state, ppid, ...
+                state, ppid = f.read().rsplit(")", 1)[1].split()[:2]
+            if int(ppid) != me or state == "Z":
+                continue
+            with open(f"/proc/{entry}/cmdline", "rb") as f:
+                if b"run-driver" in f.read():
+                    pids.add(int(entry))
+        except (OSError, ValueError, IndexError):
+            continue
+    return pids
+
+
+class _Driver:
+    """The Playwright driver process behind one capture, once its PID is known."""
+
+    def __init__(self) -> None:
+        self.pid: Optional[int] = None
+
+    def kill(self) -> None:
+        """Last resort for a driver that does not respond to a normal start or stop."""
+        # Re-check it is still our driver, so a reused PID is never signalled.
+        if self.pid is None or self.pid not in _driver_child_pids():
+            return
+        try:
+            os.kill(self.pid, signal.SIGKILL)
+            logger.warning(f"Killed unresponsive Playwright driver (pid {self.pid})")
+        except ProcessLookupError:
+            pass
+
+
+async def _start_tracked(driver: _Driver):
+    """Starts Playwright and records the PID of the driver process it spawns."""
+    from playwright.async_api import async_playwright
+
+    loop = asyncio.get_running_loop()
+    lock = _spawn_locks.setdefault(loop, asyncio.Lock())
+    async with lock:
+        before = _driver_child_pids()
+        start = asyncio.ensure_future(async_playwright().start())
+        new: set = set()
+        for _ in range(500):  # the spawn normally takes milliseconds
+            new = _driver_child_pids() - before
+            if new or start.done():
+                break
+            await asyncio.sleep(0.01)
+        if len(new) == 1:
+            driver.pid = next(iter(new))
+    try:
+        return await start
+    except asyncio.CancelledError:
+        start.cancel()
+        raise
+
+
+async def _stop_playwright(driver: _Driver, playwright) -> None:
     """
     Stops a Playwright instance, which ends its node driver process (and with it any
-    Chromium it launched). The first step closes the driver's stdin synchronously, so the
-    driver exits even if this coroutine is later cancelled or times out.
+    Chromium it launched). The first step closes the driver's stdin synchronously; if the
+    driver still has not exited after the timeout, it is killed.
     """
     try:
-        await asyncio.wait_for(playwright.stop(), timeout=15.0)
+        await asyncio.wait_for(playwright.stop(), timeout=_STOP_TIMEOUT)
     except Exception as e:
         logger.warning(f"Playwright driver did not stop cleanly: {e}")
+        driver.kill()
 
 
-def _stop_playwright_when_started(start_task: asyncio.Future) -> None:
-    """Stops the Playwright instance a start task produces, once it has produced one."""
-
-    def _on_started(task: asyncio.Future) -> None:
-        if task.cancelled() or task.exception() is not None:
-            return
-        _keep_task(task.get_loop().create_task(_stop_playwright(task.result())))
-
-    start_task.add_done_callback(_on_started)
+async def _reap_cancelled_start(driver: _Driver, start_task: asyncio.Future) -> None:
+    """
+    Cleans up after a caller that was cancelled while Playwright was starting: stops the
+    instance if start-up completes, or kills the driver if start-up stalls.
+    """
+    done, _ = await asyncio.wait({start_task}, timeout=_STARTUP_REAP_TIMEOUT)
+    if start_task in done:
+        if not start_task.cancelled() and start_task.exception() is None:
+            await _stop_playwright(driver, start_task.result())
+        return
+    logger.warning(
+        f"Playwright driver start-up stalled for {_STARTUP_REAP_TIMEOUT:.0f}s after cancellation"
+    )
+    driver.kill()
+    start_task.cancel()
 
 
 async def _start_playwright():
     """
-    Starts Playwright without leaking its driver if the caller is cancelled.
+    Starts Playwright without leaking its driver if the caller is cancelled, and returns
+    `(driver, playwright)`.
 
     Playwright spawns the node driver before its start-up handshake completes. If the
     awaiting coroutine is cancelled during that handshake (a capture timeout, a check
     timeout or the watchdog restarting the worker), `async with async_playwright()` never
     runs `__aexit__`, and the driver process stays alive for the life of the container.
-    The start runs as its own task here, so a cancelled caller hands the instance to a
-    background stop instead of dropping it.
+    The start runs as its own task here, so a cancelled caller hands it to a background
+    reaper instead of dropping it.
     """
-    from playwright.async_api import async_playwright
-
-    start_task = _keep_task(asyncio.ensure_future(async_playwright().start()))
+    driver = _Driver()
+    start_task = _keep_task(asyncio.ensure_future(_start_tracked(driver)))
     try:
-        return await asyncio.shield(start_task)
+        return driver, await asyncio.shield(start_task)
     except asyncio.CancelledError:
-        _stop_playwright_when_started(start_task)
+        _keep_task(asyncio.ensure_future(_reap_cancelled_start(driver, start_task)))
         raise
 
 
@@ -116,13 +206,16 @@ def generate_fallback_screenshot(target_path: Path, url: str, error_msg: str):
 async def _capture_with_playwright(
     filepath: Path, url: str, monitor_id: int, is_success: bool, error_message: str
 ):
-    p = await _start_playwright()
+    """Captures one screenshot with its own Playwright driver, always stopping the driver."""
+    driver, p = await _start_playwright()
     try:
         await _run_capture(p, filepath, url, monitor_id, is_success, error_message)
     finally:
         # Shielded so a cancellation here cannot skip the stop: the stop task keeps
         # running in the background and the cancellation still propagates.
-        await asyncio.shield(_keep_task(asyncio.ensure_future(_stop_playwright(p))))
+        await asyncio.shield(
+            _keep_task(asyncio.ensure_future(_stop_playwright(driver, p)))
+        )
 
 
 async def _run_capture(
@@ -133,6 +226,7 @@ async def _run_capture(
     is_success: bool,
     error_message: str,
 ):
+    """Launches Chromium and saves the screenshot, or a fallback image if navigation fails."""
     from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
     browser = await p.chromium.launch(
