@@ -1,14 +1,15 @@
 name: Build and Publish Container Image
 
+# Images are built only when one of the release tags is pushed:
+#   deploy -> ghcr.io/<repo>:latest
+#   dev    -> ghcr.io/<repo>:dev
+# The tagged commit must be on main; tags pointing anywhere else are rejected.
+# Move a tag with: git tag -f deploy <commit> && git push -f origin deploy
 on:
   push:
-    branches:
-      - main
-  pull_request:
-    branches:
-      - main
-    types: [opened, synchronize, reopened]
-  workflow_dispatch:
+    tags:
+      - deploy
+      - dev
 
 env:
   REGISTRY: ghcr.io
@@ -18,8 +19,6 @@ env:
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
-    # Only run for pushes to main or PRs originating from this same repository (not external forks)
-    if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)
     permissions:
       contents: read
       packages: write
@@ -27,6 +26,16 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify tagged commit is on main
+        run: |
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::Tag '${GITHUB_REF_NAME}' points at ${GITHUB_SHA}, which is not on main. Refusing to build."
+            exit 1
+          fi
 
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
@@ -41,8 +50,8 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=raw,value=latest,enable=${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
-            type=raw,value=pr-${{ github.head_ref }},enable=${{ github.event_name == 'pull_request' }}
+            type=raw,value=latest,enable=${{ github.ref == 'refs/tags/deploy' }}
+            type=raw,value=dev,enable=${{ github.ref == 'refs/tags/dev' }}
             type=sha,prefix=,format=short
 
       - name: Set up Docker Buildx
